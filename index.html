@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#214f77" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="DaltonHCAS" />
+    <meta
+      name="description"
+      content="A local HCAS app for awarding points through the school 7Cs and tracking house totals."
+    />
+    <title>DaltonHCAS House Points</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="192x192" href="assets/icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="is-logged-out">
+    <section class="login-screen" id="login-screen" aria-labelledby="login-title">
+      <div class="login-panel">
+        <div class="login-brand">
+          <img src="assets/dalton-plan-house-teams.jpg" alt="HCAS Dalton Plan House Teams emblem" />
+          <div>
+            <span>HCAS</span>
+            <h1 id="login-title">House Points</h1>
+            <p>Sign in with your teacher account to give points and review your activity.</p>
+          </div>
+        </div>
+
+        <form class="login-form" id="login-form">
+          <div class="login-form-heading">
+            <h2>Teacher login</h2>
+            <p>Enter your username and password.</p>
+          </div>
+
+          <label for="login-username">Username</label>
+          <input id="login-username" name="username" type="text" autocomplete="username" required />
+
+          <label for="login-password">Password</label>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required />
+
+          <p class="login-error" id="login-error" role="alert"></p>
+          <button class="primary-button login-button" type="submit">Log in</button>
+        </form>
+      </div>
+    </section>
+
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand-lockup">
+          <img src="assets/dalton-plan-house-teams.jpg" alt="HCAS Dalton Plan House Teams emblem" />
+          <div>
+            <strong>HCAS</strong>
+            <span>House Points</span>
+          </div>
+        </div>
+
+        <nav class="side-nav" aria-label="Primary navigation">
+          <button class="nav-button is-active" type="button" data-view="dashboard" aria-current="page">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-16v5h6V4h-6Z" /></svg>
+            Dashboard
+          </button>
+          <button class="nav-button" type="button" data-view="send">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2.4-7.6L3 11Zm5.2.4 3.2 1 1 3.2L17 7l-8.8 4.4Z" /></svg>
+            Send
+          </button>
+          <button class="nav-button" type="button" data-view="students">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M16 11c1.7 0 3-1.3 3-3s-1.3-3-3-3-3 1.3-3 3 1.3 3 3 3ZM8 11c1.7 0 3-1.3 3-3S9.7 5 8 5 5 6.3 5 8s1.3 3 3 3Zm8 2c-1.8 0-5 1-5 3v3h10v-3c0-2-3.2-3-5-3ZM8 13c-2.3 0-6 1.2-6 3.5V19h7v-3c0-.8.3-1.5.9-2.1-.7-.5-1.3-.9-1.9-.9Z" /></svg>
+            Students
+          </button>
+          <button class="nav-button" type="button" data-view="activity">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8Zm1-13h-2v6l5.2 3.1 1-1.7-4.2-2.5V7Z" /></svg>
+            My activity
+          </button>
+        </nav>
+
+        <div class="sidebar-account">
+          <img class="teacher-avatar" id="teacher-avatar" src="assets/dalton-plan-house-teams.jpg" alt="" />
+          <div><strong id="teacher-name"></strong><span>Teacher</span></div>
+          <button type="button" data-action="logout">Log out</button>
+        </div>
+      </aside>
+
+      <div class="main-column">
+        <header class="topbar">
+          <div class="mobile-brand">
+            <img src="assets/dalton-plan-house-teams.jpg" alt="" />
+            <strong>HCAS House Points</strong>
+          </div>
+          <div class="topbar-actions">
+            <div class="topbar-house-scores" id="topbar-house-scores" aria-label="Live house points"></div>
+          </div>
+        </header>
+
+        <main id="view-root" tabindex="-1"></main>
+      </div>
+
+      <nav class="bottom-nav" aria-label="Mobile navigation">
+        <button type="button" data-view="dashboard" class="is-active" aria-current="page">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-16v5h6V4h-6Z" /></svg>
+          <span>Dashboard</span>
+        </button>
+        <button type="button" data-view="send">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2.4-7.6L3 11Zm5.2.4 3.2 1 1 3.2L17 7l-8.8 4.4Z" /></svg>
+          <span>Send</span>
+        </button>
+        <button type="button" data-view="students">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M16 11c1.7 0 3-1.3 3-3s-1.3-3-3-3-3 1.3-3 3 1.3 3 3 3ZM8 11c1.7 0 3-1.3 3-3S9.7 5 8 5 5 6.3 5 8s1.3 3 3 3Zm8 2c-1.8 0-5 1-5 3v3h10v-3c0-2-3.2-3-5-3ZM8 13c-2.3 0-6 1.2-6 3.5V19h7v-3c0-.8.3-1.5.9-2.1-.7-.5-1.3-.9-1.9-.9Z" /></svg>
+          <span>Students</span>
+        </button>
+        <button type="button" data-view="activity">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8Zm1-13h-2v6l5.2 3.1 1-1.7-4.2-2.5V7Z" /></svg>
+          <span>Activity</span>
+        </button>
+      </nav>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
