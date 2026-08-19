@@ -1,0 +1,11 @@
+{
+  "name": "dalton-hcas",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "verify": "npm run test"
+  }
+}
