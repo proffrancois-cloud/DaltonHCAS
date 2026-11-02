@@ -1,7 +1,6 @@
 import {
   ACADEMIC_CONCERN_EXAMPLES,
   ACADEMIC_PROFILES,
-  AVAILABLE_GRADES,
   BEHAVIOR_ISSUES,
   BEHAVIOR_LOCATIONS,
   BEHAVIOR_RESPONSE_OPTIONS,
@@ -484,6 +483,10 @@ function getFilteredSendStudents() {
   return getStudentsMatchingFilters(getStudentFilters("send"));
 }
 
+function getAvailableGrades() {
+  return [...new Set(state.students.map(student => student.grade))].sort((a, b) => a - b);
+}
+
 function getStudentFilters(context) {
   if (context === "students") {
     return { query: studentQuery, house: houseFilter, grade: studentGradeFilter };
@@ -521,7 +524,7 @@ function renderStudentFilters(context) {
         `).join("")}
       </div>
       <div class="grade-filters" role="group" aria-label="Filter by grade">
-        ${["all", ...AVAILABLE_GRADES.map(String)].map((grade) => `
+        ${["all", ...getAvailableGrades().map(String)].map((grade) => `
           <button type="button" data-action="filter-grade" data-grade="${grade}" class="${filters.grade === grade ? "is-selected" : ""}" aria-pressed="${filters.grade === grade}">${grade === "all" ? "All grades" : `Grade ${grade}`}</button>
         `).join("")}
       </div>
@@ -859,7 +862,7 @@ function renderCalendarEventCreateModal() {
           <label>Date<input name="date" type="date" required /></label>
           <label>Title<input name="title" required maxlength="120" /></label>
           ${scopeFields}
-          <label>Grade<select name="grade"><option value="all">All grades</option>${AVAILABLE_GRADES.map((grade) => `<option value="${grade}">Grade ${grade}</option>`).join("")}</select></label>
+          <label>Grade<select name="grade"><option value="all">All grades</option>${getAvailableGrades().map((grade) => `<option value="${grade}">Grade ${grade}</option>`).join("")}</select></label>
           <label>Start time<input name="startTime" type="time" value="13:15" required /></label>
           <label>End time<input name="endTime" type="time" value="14:05" required /></label>
           <label>Location<input name="location" maxlength="160" /></label>
@@ -1128,7 +1131,7 @@ function renderStudentRanking() {
           Grade
           <select id="ranking-grade-filter">
             <option value="all" ${rankingGradeFilter === "all" ? "selected" : ""}>All grades</option>
-            ${AVAILABLE_GRADES
+            ${getAvailableGrades()
               .map(
                 (grade) =>
                   `<option value="${grade}" ${rankingGradeFilter === String(grade) ? "selected" : ""}>Grade ${grade}</option>`
