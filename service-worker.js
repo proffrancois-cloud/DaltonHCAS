@@ -1,4 +1,4 @@
-const CACHE_NAME = "dalton-hcas-v1";
+const CACHE_NAME = "dalton-hcas-v2";
 
 const APP_SHELL = [
   "./",
@@ -6,6 +6,7 @@ const APP_SHELL = [
   "./styles.css",
   "./app.js",
   "./data.js",
+  "./concerns-data.js",
   "./manifest.webmanifest",
   "./assets/icons/icon-192.png",
   "./assets/icons/icon-512.png",

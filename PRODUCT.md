@@ -10,7 +10,7 @@ Authenticated HCAS teachers using a computer or phone during the school day. The
 
 ## Product Purpose
 
-Require a teacher login, record 10-to-50-point recognitions against one of the HCAS 7Cs, identify the teacher who gave each recognition, let teachers narrow students by grade and house, add those points to the student's house, show the four-house leaderboard, and make student and teacher histories easy to review. Success means a teacher can complete an award accurately in a few clicks and immediately see the updated totals and personal activity record.
+Require a teacher login; record 10-to-50-point recognitions against one of the HCAS 7Cs; document behavior concerns using the HCAS Student Behavior Code; and document teacher-only academic concerns using the school's MTSS framework. Teachers can work with one or several students, review publication histories, filter the school coin ranking, and distinguish student-safe information from confidential teacher records. Success means a teacher can create an accurate record quickly and immediately see it in the relevant student profile.
 
 ## Brand Personality
 
@@ -27,6 +27,7 @@ Avoid childish classroom-game styling, casino-like rewards, excessive animation,
 3. Use authentic HCAS house identity, not generic substitutes.
 4. Favor familiar controls and short labels over novel interactions.
 5. Keep the same core workflow on phones and computers.
+6. Make privacy status explicit wherever information is teacher-only or student-safe.
 
 ## Accessibility & Inclusion
 

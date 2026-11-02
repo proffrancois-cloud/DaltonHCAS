@@ -1,3 +1,29 @@
+import {
+  ACADEMIC_CONCERN_EXAMPLES,
+  ACADEMIC_PROFILES,
+  BEHAVIOR_ISSUES,
+  BEHAVIOR_STRATEGY_GROUPS,
+  LEVEL_ONE_ACTIONS,
+  LEVEL_TWO_ACTION,
+  MAX_CONCERN_DESCRIPTION_LENGTH,
+  MAX_CONCERN_TITLE_LENGTH,
+  MAX_INTERNAL_NOTE_LENGTH,
+  TIER_ONE_INSTRUCTIONAL_STRATEGIES,
+  TIER_TWO_ACADEMIC_INTERVENTIONS
+} from "./concerns-data.js";
+
+export {
+  ACADEMIC_CONCERN_EXAMPLES,
+  ACADEMIC_PROFILES,
+  BEHAVIOR_ISSUES,
+  BEHAVIOR_STRATEGY_GROUPS,
+  MAX_CONCERN_DESCRIPTION_LENGTH,
+  MAX_CONCERN_TITLE_LENGTH,
+  MAX_INTERNAL_NOTE_LENGTH,
+  TIER_ONE_INSTRUCTIONAL_STRATEGIES,
+  TIER_TWO_ACADEMIC_INTERVENTIONS
+};
+
 export const DEFAULT_POINTS = 10;
 export const POINT_OPTIONS = [10, 20, 30, 40, 50];
 export const MAX_COMMENT_LENGTH = 300;
@@ -155,9 +181,11 @@ export function createInitialState(now = Date.now()) {
   }
 
   return {
-    version: 3,
+    version: 4,
     students: STUDENTS.map((student) => ({ ...student })),
-    awards
+    awards,
+    behaviorConcerns: [],
+    academicConcerns: []
   };
 }
 
@@ -227,6 +255,136 @@ export function removeAward(state, awardId, teacherId) {
     ...state,
     awards: state.awards.filter((item) => item.id !== awardId)
   };
+}
+
+export function getBehaviorCodeActions(state, studentIds, issueIds) {
+  return studentIds.flatMap((studentId) =>
+    issueIds.map((issueId) => {
+      const issue = BEHAVIOR_ISSUES.find((item) => item.id === issueId);
+      if (!issue) throw new Error("Unknown behavior issue");
+
+      const previousCount = (state.behaviorConcerns ?? []).filter(
+        (concern) =>
+          concern.studentIds.includes(studentId) && concern.issueIds.includes(issueId)
+      ).length;
+      const occurrence = previousCount + 1;
+      const action =
+        issue.level === 2
+          ? LEVEL_TWO_ACTION
+          : LEVEL_ONE_ACTIONS[Math.min(occurrence, 3)];
+
+      return {
+        studentId,
+        issueId,
+        level: issue.level,
+        occurrence,
+        label: action.label,
+        description: action.description
+      };
+    })
+  );
+}
+
+export function addBehaviorConcern(state, payload, now = Date.now()) {
+  const { studentIds, title, description, teacherId, incidentDate } = normalizeConcernBase(
+    payload,
+    "Behavior"
+  );
+  const issueIds = [...new Set(payload.issueIds ?? [])];
+  const otherIssue = normalizeText(payload.otherIssue, MAX_CONCERN_DESCRIPTION_LENGTH);
+
+  if (!issueIds.length && !otherIssue) {
+    throw new Error("Choose at least one behavior issue");
+  }
+  if (issueIds.some((issueId) => !BEHAVIOR_ISSUES.some((issue) => issue.id === issueId))) {
+    throw new Error("Unknown behavior issue");
+  }
+
+  const strategies = normalizeStringList(payload.strategies, 220);
+  const otherStrategy = normalizeText(payload.otherStrategy, MAX_CONCERN_DESCRIPTION_LENGTH);
+  const customAction = normalizeText(payload.customAction, MAX_CONCERN_DESCRIPTION_LENGTH);
+  const confidentialNote = normalizeText(payload.confidentialNote, MAX_INTERNAL_NOTE_LENGTH);
+  const publishedAt = new Date(now).toISOString();
+
+  const concern = {
+    id: `behavior-${now}-${(state.behaviorConcerns ?? []).length}`,
+    studentIds,
+    issueIds,
+    otherIssue,
+    title,
+    description,
+    strategies,
+    otherStrategy,
+    customAction,
+    confidentialNote,
+    teacherId,
+    incidentDate,
+    publishedAt,
+    codeActions: getBehaviorCodeActions(state, studentIds, issueIds)
+  };
+
+  return {
+    ...state,
+    behaviorConcerns: [...(state.behaviorConcerns ?? []), concern]
+  };
+}
+
+export function addAcademicConcern(state, payload, now = Date.now()) {
+  const { studentIds, title, description, teacherId, incidentDate } = normalizeConcernBase(
+    payload,
+    "Academic"
+  );
+  const tier = Number(payload.tier);
+  const issueIds = normalizeStringList(payload.issueIds, 260);
+  const otherIssue = normalizeText(payload.otherIssue, MAX_CONCERN_DESCRIPTION_LENGTH);
+  const profileId = String(payload.profileId ?? "").trim();
+
+  if (![1, 2, 3].includes(tier)) throw new Error("Choose an academic tier");
+  if (!issueIds.length && !otherIssue && !profileId) {
+    throw new Error("Choose or describe an academic issue");
+  }
+  if (profileId && !ACADEMIC_PROFILES.some((profile) => profile.id === profileId)) {
+    throw new Error("Unknown academic profile");
+  }
+
+  const concern = {
+    id: `academic-${now}-${(state.academicConcerns ?? []).length}`,
+    studentIds,
+    tier,
+    issueIds,
+    otherIssue,
+    profileId,
+    title,
+    description,
+    strategies: normalizeStringList(payload.strategies, 260),
+    otherStrategy: normalizeText(payload.otherStrategy, MAX_CONCERN_DESCRIPTION_LENGTH),
+    actionDetails: normalizeRequiredText(
+      payload.actionDetails,
+      MAX_CONCERN_DESCRIPTION_LENGTH,
+      "Academic action taken"
+    ),
+    internalNote: normalizeText(payload.internalNote, MAX_INTERNAL_NOTE_LENGTH),
+    teacherId,
+    incidentDate,
+    publishedAt: new Date(now).toISOString()
+  };
+
+  return {
+    ...state,
+    academicConcerns: [...(state.academicConcerns ?? []), concern]
+  };
+}
+
+export function getStudentBehaviorConcerns(state, studentId) {
+  return (state.behaviorConcerns ?? [])
+    .filter((concern) => concern.studentIds.includes(studentId))
+    .sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
+}
+
+export function getStudentAcademicConcerns(state, studentId) {
+  return (state.academicConcerns ?? [])
+    .filter((concern) => concern.studentIds.includes(studentId))
+    .sort((a, b) => new Date(b.publishedAt) - new Date(a.publishedAt));
 }
 
 export function getHouseTotals(state) {
@@ -299,13 +457,42 @@ export function getStudentTotal(state, studentId) {
     .reduce((total, award) => total + award.points, 0);
 }
 
+export function getStudentRanking(
+  state,
+  { valueId = "all", grade = "all", date = "" } = {}
+) {
+  return state.students
+    .filter((student) => grade === "all" || String(student.grade) === String(grade))
+    .map((student) => {
+      const awards = state.awards.filter(
+        (award) =>
+          award.studentId === student.id &&
+          (valueId === "all" || award.valueId === valueId) &&
+          (!date || toLocalDateKey(award.createdAt) === date)
+      );
+      return {
+        ...student,
+        points: awards.reduce((total, award) => total + award.points, 0),
+        recognitions: awards.length
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.points - a.points ||
+        b.recognitions - a.recognitions ||
+        a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" })
+    );
+}
+
 export function isValidStoredState(state) {
   return Boolean(
     state &&
-      state.version === 3 &&
+      state.version === 4 &&
       Array.isArray(state.students) &&
       state.students.length === STUDENTS.length &&
       Array.isArray(state.awards) &&
+      Array.isArray(state.behaviorConcerns) &&
+      Array.isArray(state.academicConcerns) &&
       state.students.every(
         (student) =>
           STUDENTS.some(
@@ -315,7 +502,9 @@ export function isValidStoredState(state) {
               knownStudent.grade === student.grade
           )
       ) &&
-      state.awards.every((award) => isValidAward(award, state.students))
+      state.awards.every((award) => isValidAward(award, state.students)) &&
+      state.behaviorConcerns.every((concern) => isValidBehaviorConcern(concern, state.students)) &&
+      state.academicConcerns.every((concern) => isValidAcademicConcern(concern, state.students))
   );
 }
 
@@ -324,20 +513,18 @@ export function migrateStoredState(state) {
     return state;
   }
 
-  if (
-    !state ||
-    state.version !== 2 ||
-    !Array.isArray(state.students) ||
-    !Array.isArray(state.awards) ||
-    !state.awards.every((award) => isValidAward(award, state.students))
-  ) {
+  if (!state || ![2, 3].includes(state.version) || !Array.isArray(state.students) || !Array.isArray(state.awards)) {
     return null;
   }
 
+  if (!state.awards.every((award) => isValidAward(award, state.students))) return null;
+
   return {
-    version: 3,
+    version: 4,
     students: STUDENTS.map((student) => ({ ...student })),
-    awards: state.awards.map((award) => ({ ...award }))
+    awards: state.awards.map((award) => ({ ...award })),
+    behaviorConcerns: [],
+    academicConcerns: []
   };
 }
 
@@ -352,4 +539,103 @@ function isValidAward(award, students) {
         (typeof award.comment === "string" && award.comment.length <= MAX_COMMENT_LENGTH)) &&
       !Number.isNaN(new Date(award.createdAt).getTime())
   );
+}
+
+function isValidBehaviorConcern(concern, students) {
+  return Boolean(
+    concern &&
+      concern.studentIds?.length &&
+      concern.studentIds.every((studentId) => students.some((student) => student.id === studentId)) &&
+      concern.issueIds?.every((issueId) => BEHAVIOR_ISSUES.some((issue) => issue.id === issueId)) &&
+      typeof concern.title === "string" &&
+      typeof concern.description === "string" &&
+      TEACHERS.some((teacher) => teacher.id === concern.teacherId) &&
+      !Number.isNaN(new Date(concern.incidentDate).getTime()) &&
+      !Number.isNaN(new Date(concern.publishedAt).getTime())
+  );
+}
+
+function isValidAcademicConcern(concern, students) {
+  return Boolean(
+    concern &&
+      concern.studentIds?.length &&
+      concern.studentIds.every((studentId) => students.some((student) => student.id === studentId)) &&
+      [1, 2, 3].includes(concern.tier) &&
+      typeof concern.title === "string" &&
+      typeof concern.description === "string" &&
+      typeof concern.actionDetails === "string" &&
+      TEACHERS.some((teacher) => teacher.id === concern.teacherId) &&
+      !Number.isNaN(new Date(concern.incidentDate).getTime()) &&
+      !Number.isNaN(new Date(concern.publishedAt).getTime())
+  );
+}
+
+function normalizeStudentIds(studentIds) {
+  const normalized = [...new Set(studentIds ?? [])];
+  if (!normalized.length) throw new Error("Choose at least one student");
+  if (normalized.some((studentId) => !STUDENTS.some((student) => student.id === studentId))) {
+    throw new Error("Unknown student");
+  }
+  return normalized;
+}
+
+function normalizeConcernBase(payload, concernType) {
+  return {
+    studentIds: normalizeStudentIds(payload.studentIds),
+    title: normalizeRequiredText(
+      payload.title,
+      MAX_CONCERN_TITLE_LENGTH,
+      `${concernType} concern title`
+    ),
+    description: normalizeRequiredText(
+      payload.description,
+      MAX_CONCERN_DESCRIPTION_LENGTH,
+      `${concernType} concern description`
+    ),
+    teacherId: validateTeacher(payload.teacherId),
+    incidentDate: validateDateInput(payload.incidentDate)
+  };
+}
+
+function validateTeacher(teacherId) {
+  if (!TEACHERS.some((teacher) => teacher.id === teacherId)) {
+    throw new Error("Unknown teacher");
+  }
+  return teacherId;
+}
+
+function validateDateInput(date) {
+  const normalized = String(date ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized) || Number.isNaN(new Date(`${normalized}T00:00:00`).getTime())) {
+    throw new Error("Invalid concern date");
+  }
+  return normalized;
+}
+
+function normalizeRequiredText(value, maxLength, label) {
+  const normalized = normalizeText(value, maxLength);
+  if (!normalized) throw new Error(`${label} is required`);
+  return normalized;
+}
+
+function normalizeText(value, maxLength) {
+  const normalized = String(value ?? "").trim();
+  if (normalized.length > maxLength) throw new Error("Text is too long");
+  return normalized;
+}
+
+function normalizeStringList(values, maxItemLength) {
+  const normalized = [...new Set((values ?? []).map((value) => String(value).trim()).filter(Boolean))];
+  if (normalized.some((value) => value.length > maxItemLength)) {
+    throw new Error("Selection text is too long");
+  }
+  return normalized;
+}
+
+function toLocalDateKey(dateString) {
+  const date = new Date(dateString);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }

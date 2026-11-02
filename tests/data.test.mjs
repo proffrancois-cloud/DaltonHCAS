@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import test from "node:test";
 import {
+  ACADEMIC_PROFILES,
+  BEHAVIOR_ISSUES,
   DEFAULT_POINTS,
   HOUSES,
   MAX_COMMENT_LENGTH,
@@ -9,12 +11,17 @@ import {
   STUDENTS,
   TEACHERS,
   VALUES,
+  addAcademicConcern,
   addAward,
+  addBehaviorConcern,
   authenticateTeacher,
   createInitialState,
   getHouseLeaders,
   getHouseTotals,
+  getStudentAcademicConcerns,
   getStudentAwards,
+  getStudentBehaviorConcerns,
+  getStudentRanking,
   getStudentStats,
   getStudentTotal,
   getTeacherAwards,
@@ -254,8 +261,104 @@ test("version 2 activity migrates without losing awards", () => {
   };
 
   const migratedState = migrateStoredState(legacyState);
-  assert.equal(migratedState.version, 3);
+  assert.equal(migratedState.version, 4);
   assert.equal(migratedState.students.length, 11);
   assert.equal(migratedState.students[0].grade, 9);
   assert.deepEqual(migratedState.awards, legacyState.awards);
+  assert.deepEqual(migratedState.behaviorConcerns, []);
+  assert.deepEqual(migratedState.academicConcerns, []);
+});
+
+test("behavior issues exactly cover the 10 Level I and 14 Level II code categories", () => {
+  assert.equal(BEHAVIOR_ISSUES.filter((issue) => issue.level === 1).length, 10);
+  assert.equal(BEHAVIOR_ISSUES.filter((issue) => issue.level === 2).length, 14);
+});
+
+test("behavior concerns support multiple students and advance code actions by occurrence", () => {
+  const now = new Date("2026-11-02T04:00:00Z").getTime();
+  const state = createInitialState(now);
+  const first = addBehaviorConcern(
+    state,
+    {
+      studentIds: ["random1", "random5"],
+      issueIds: ["classroom-misconduct"],
+      title: "Repeated disruption",
+      description: "The students repeatedly interrupted direct instruction.",
+      strategies: ["Redirect off-task behavior"],
+      confidentialNote: "Teacher-only context",
+      teacherId: "david",
+      incidentDate: "2026-11-02"
+    },
+    now + 1_000
+  );
+  const concern = first.behaviorConcerns[0];
+
+  assert.deepEqual(concern.studentIds, ["random1", "random5"]);
+  assert.equal(concern.codeActions.every((action) => action.label === "First occurrence"), true);
+  assert.equal(concern.confidentialNote, "Teacher-only context");
+  assert.equal(getStudentBehaviorConcerns(first, "random1")[0].id, concern.id);
+  assert.equal(getStudentBehaviorConcerns(first, "random5")[0].id, concern.id);
+
+  const second = addBehaviorConcern(
+    first,
+    {
+      studentIds: ["random1"],
+      issueIds: ["classroom-misconduct"],
+      title: "Second disruption",
+      description: "The behavior occurred again after reteaching.",
+      teacherId: "francois",
+      incidentDate: "2026-11-03"
+    },
+    now + 2_000
+  );
+  assert.equal(second.behaviorConcerns.at(-1).codeActions[0].label, "Second occurrence");
+});
+
+test("Level II behavior concerns always retrieve immediate administrative referral", () => {
+  const state = createInitialState();
+  const updated = addBehaviorConcern(state, {
+    studentIds: ["random2"],
+    issueIds: ["fighting"],
+    title: "Physical altercation",
+    description: "A physical altercation occurred during lunch.",
+    teacherId: "david",
+    incidentDate: "2026-11-02"
+  });
+  assert.equal(updated.behaviorConcerns[0].codeActions[0].label, "Immediate administrative referral");
+});
+
+test("academic concerns use the six requested profiles with five interventions each", () => {
+  assert.equal(ACADEMIC_PROFILES.length, 6);
+  assert.equal(ACADEMIC_PROFILES.every((profile) => profile.strategies.length === 5), true);
+
+  const state = createInitialState();
+  const updated = addAcademicConcern(state, {
+    studentIds: ["random3", "random4"],
+    tier: 3,
+    issueIds: ["Performing well below grade level in reading, writing, or math"],
+    profileId: "dyslexia",
+    title: "Reading fluency concern",
+    description: "Progress monitoring shows persistent decoding difficulty.",
+    strategies: ACADEMIC_PROFILES[0].strategies.slice(0, 2),
+    actionDetails: "Provided explicit decoding practice twice this week.",
+    internalNote: "Teacher-only academic context",
+    teacherId: "francois",
+    incidentDate: "2026-11-02"
+  });
+
+  assert.equal(getStudentAcademicConcerns(updated, "random3")[0].profileId, "dyslexia");
+  assert.equal(getStudentAcademicConcerns(updated, "random4")[0].internalNote, "Teacher-only academic context");
+});
+
+test("student ranking filters by 7C, grade, and publication date", () => {
+  const now = new Date("2026-11-02T04:00:00Z").getTime();
+  let state = createInitialState(now);
+  state = addAward(state, "random1", "creativity", "david", 50, now + 60_000);
+
+  const creativityRanking = getStudentRanking(state, { valueId: "creativity", grade: "9" });
+  assert.deepEqual(creativityRanking.map((student) => student.id), ["random1", "random2"]);
+  assert.equal(creativityRanking[0].points, 60);
+
+  const dateRanking = getStudentRanking(state, { date: "2026-11-02" });
+  assert.equal(dateRanking[0].points > 0, true);
 });

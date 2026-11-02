@@ -1,15 +1,30 @@
 import {
+  ACADEMIC_CONCERN_EXAMPLES,
+  ACADEMIC_PROFILES,
+  BEHAVIOR_ISSUES,
+  BEHAVIOR_STRATEGY_GROUPS,
   HOUSES,
+  MAX_CONCERN_DESCRIPTION_LENGTH,
+  MAX_CONCERN_TITLE_LENGTH,
+  MAX_INTERNAL_NOTE_LENGTH,
   MAX_COMMENT_LENGTH,
   POINT_OPTIONS,
   TEACHERS,
+  TIER_ONE_INSTRUCTIONAL_STRATEGIES,
+  TIER_TWO_ACADEMIC_INTERVENTIONS,
   VALUES,
+  addAcademicConcern,
   addAward,
+  addBehaviorConcern,
   authenticateTeacher,
   createInitialState,
+  getBehaviorCodeActions,
   getHouseLeaders,
   getHouseTotals,
+  getStudentAcademicConcerns,
   getStudentAwards,
+  getStudentBehaviorConcerns,
+  getStudentRanking,
   getStudentStats,
   getStudentTotal,
   getTeacherAwards,
@@ -18,8 +33,8 @@ import {
   removeAward
 } from "./data.js";
 
-const STORAGE_KEY = "hcas-house-points-v3";
-const LEGACY_STORAGE_KEYS = ["hcas-house-points-v2"];
+const STORAGE_KEY = "hcas-house-points-v4";
+const LEGACY_STORAGE_KEYS = ["hcas-house-points-v3", "hcas-house-points-v2"];
 const SESSION_KEY = "hcas-house-points-teacher";
 const viewRoot = document.querySelector("#view-root");
 const toast = document.querySelector("#toast");
@@ -46,6 +61,12 @@ let expandedHouseId = null;
 let expandedStudentValueId = null;
 let expandedTeacherValueId = null;
 let lastConfirmation = null;
+let rankingValueFilter = "all";
+let rankingGradeFilter = "all";
+let rankingDateFilter = "";
+let rankingExpanded = false;
+let lastConcernConfirmation = null;
+let concernStudentPreset = null;
 let toastTimer;
 
 function loadState() {
@@ -83,7 +104,16 @@ function saveTeacherSession(teacher) {
 
 function getViewFromHash() {
   const hash = window.location.hash.replace("#", "");
-  return ["dashboard", "send", "students", "activity"].includes(hash) ? hash : "dashboard";
+  return [
+    "dashboard",
+    "send",
+    "behavior-concern",
+    "academic-concern",
+    "students",
+    "activity"
+  ].includes(hash)
+    ? hash
+    : "dashboard";
 }
 
 function setView(view, options = {}) {
@@ -206,6 +236,25 @@ function formatDateTime(dateString) {
   }).format(new Date(dateString));
 }
 
+function formatDateOnly(dateString) {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(dateString))
+    ? new Date(`${dateString}T12:00:00`)
+    : new Date(dateString);
+  return new Intl.DateTimeFormat("en", {
+    year: "numeric",
+    month: "short",
+    day: "numeric"
+  }).format(date);
+}
+
+function getTodayInputValue() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function renderPageHeader(title, description, action = "") {
   return `
     <header class="page-header">
@@ -276,6 +325,89 @@ function renderHouseLeaders(house) {
   `;
 }
 
+function renderStudentRanking() {
+  const ranking = getStudentRanking(state, {
+    valueId: rankingValueFilter,
+    grade: rankingGradeFilter,
+    date: rankingDateFilter
+  });
+  const visibleStudents = rankingExpanded ? ranking : ranking.slice(0, 20);
+  const filterLabel = rankingValueFilter === "all" ? "All 7Cs" : getValue(rankingValueFilter).name;
+
+  return `
+    <section class="panel student-ranking-panel" aria-labelledby="student-ranking-title">
+      <div class="panel-heading ranking-heading">
+        <div>
+          <h2 id="student-ranking-title">Student coin ranking</h2>
+          <p>${rankingExpanded ? "Full student roster" : "Top 20 students"}</p>
+        </div>
+        <button class="text-button" type="button" data-action="toggle-ranking-roster">
+          ${rankingExpanded ? "Show top 20" : "View full roster"}
+        </button>
+      </div>
+
+      <div class="ranking-filters" aria-label="Ranking filters">
+        <label>
+          HCAS 7C
+          <select id="ranking-value-filter">
+            <option value="all" ${rankingValueFilter === "all" ? "selected" : ""}>All 7Cs</option>
+            ${VALUES.map(
+              (value) =>
+                `<option value="${value.id}" ${rankingValueFilter === value.id ? "selected" : ""}>${value.name}</option>`
+            ).join("")}
+          </select>
+        </label>
+        <label>
+          Grade
+          <select id="ranking-grade-filter">
+            <option value="all" ${rankingGradeFilter === "all" ? "selected" : ""}>All grades</option>
+            ${[9, 10, 11, 12]
+              .map(
+                (grade) =>
+                  `<option value="${grade}" ${rankingGradeFilter === String(grade) ? "selected" : ""}>Grade ${grade}</option>`
+              )
+              .join("")}
+          </select>
+        </label>
+        <label>
+          Coin publication date
+          <span class="date-filter-control">
+            <input id="ranking-date-filter" type="date" value="${rankingDateFilter}" />
+            ${rankingDateFilter ? '<button type="button" data-action="clear-ranking-date">All dates</button>' : ""}
+          </span>
+        </label>
+      </div>
+
+      <div class="responsive-table ranking-table-wrap">
+        <table class="ranking-table">
+          <thead><tr><th scope="col">Rank</th><th scope="col">Student</th><th scope="col">Grade</th><th scope="col">Coins</th><th scope="col">Points</th></tr></thead>
+          <tbody>
+            ${visibleStudents
+              .map(
+                (student, index) => `
+                  <tr>
+                    <td class="ranking-position">${index + 1}</td>
+                    <td>${renderStudentIdentity(student, {
+                      secondary: getHouse(student.houseId).name,
+                      points: student.points.toLocaleString(),
+                      action: true,
+                      className: "is-compact"
+                    })}</td>
+                    <td>Grade ${student.grade}</td>
+                    <td>${student.recognitions}</td>
+                    <td><strong>${student.points.toLocaleString()}</strong></td>
+                  </tr>
+                `
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>
+      <p class="ranking-caption">${filterLabel}${rankingDateFilter ? `, published on ${formatDateOnly(rankingDateFilter)}` : ", all publication dates"}.</p>
+    </section>
+  `;
+}
+
 function renderDashboard() {
   const totals = getHouseTotals(state);
   const rankedHouses = [...HOUSES].sort((a, b) => totals[b.id] - totals[a.id]);
@@ -289,7 +421,7 @@ function renderDashboard() {
       ${renderPageHeader(
         "House dashboard",
         "",
-        '<button class="primary-button" type="button" data-action="go-send">Send points</button>'
+        '<button class="primary-button" type="button" data-action="go-send">Send coin</button>'
       )}
 
       <div class="dashboard-layout">
@@ -369,13 +501,15 @@ function renderDashboard() {
                       action: true,
                       className: "is-compact"
                     })}
-                    <time datetime="${award.createdAt}">${formatRelativeTime(award.createdAt)}</time>
+                    <time datetime="${award.createdAt}" title="Published ${formatDateTime(award.createdAt)}">Published ${formatRelativeTime(award.createdAt)}</time>
                   </li>
                 `;
               })
               .join("")}
           </ul>
         </section>
+
+        ${renderStudentRanking()}
       </div>
     </div>
   `;
@@ -444,7 +578,7 @@ function renderSendSummary(student, selectedValue, canSend) {
         data-action="send-award"
         data-student-id="${student.id}"
         ${canSend ? "" : "disabled"}
-      >${selectedPoints ? `Send ${selectedPoints} points to ${student.name}` : `Send points to ${student.name}`}</button>
+      >${selectedPoints ? `Send ${selectedPoints} points to ${student.name}` : `Send coin to ${student.name}`}</button>
       <p class="helper-text">The points will be added to ${house.name}.</p>
     </article>
   `;
@@ -458,7 +592,7 @@ function renderSend() {
 
   return `
     <div class="page">
-      ${renderPageHeader("Send points", "Choose a 7C, points, one or more students, and an optional comment.")}
+      ${renderPageHeader("Send coin", "Choose a 7C, points, one or more students, and an optional comment.")}
 
       ${lastConfirmation ? renderConfirmation(lastConfirmation) : ""}
 
@@ -593,11 +727,268 @@ function renderConfirmation(confirmation) {
       <span class="confirmation-check" aria-hidden="true">✓</span>
       <div>
         <strong>${confirmation.points} points sent to ${student.name}</strong>
-        <p>${value.name} · ${house.name}</p>
+        <p>${value.name} · ${house.name}${confirmation.publishedAt ? ` · Published ${formatDateTime(confirmation.publishedAt)}` : ""}</p>
         ${renderRecognitionComment(confirmation.comment)}
       </div>
       <button type="button" data-action="open-student" data-student-id="${student.id}">View student</button>
     </section>
+  `;
+}
+
+function renderConcernConfirmation() {
+  if (!lastConcernConfirmation) return "";
+  const students = lastConcernConfirmation.studentIds.map(getStudent).filter(Boolean);
+  return `
+    <section class="confirmation concern-confirmation" aria-label="Concern published">
+      <span class="confirmation-check" aria-hidden="true">✓</span>
+      <div>
+        <strong>${lastConcernConfirmation.type} published for ${students.map((student) => student.name).join(", ")}</strong>
+        <p>Published ${formatDateTime(lastConcernConfirmation.publishedAt)} by ${activeTeacher.name}</p>
+      </div>
+      <button type="button" data-action="open-student" data-student-id="${students[0]?.id ?? ""}">View profile</button>
+    </section>
+  `;
+}
+
+function renderConcernStudentSelector() {
+  return `
+    <div class="concern-student-grid" role="group" aria-label="Students involved">
+      ${state.students
+        .map((student) => {
+          const house = getHouse(student.houseId);
+          return `
+            <label class="concern-student-option">
+              <input type="checkbox" name="studentIds" value="${student.id}" ${concernStudentPreset === student.id ? "checked" : ""} />
+              <span>
+                <img src="${house.image}" alt="" />
+                <span><strong>${student.name}</strong><small>Grade ${student.grade} · ${house.name}</small></span>
+                <b class="points-notification">${getStudentTotal(state, student.id)}</b>
+              </span>
+            </label>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderBehaviorIssueOptions(level) {
+  return BEHAVIOR_ISSUES.filter((issue) => issue.level === level)
+    .map(
+      (issue) => `
+        <label class="issue-option">
+          <input type="checkbox" name="issueIds" value="${issue.id}" />
+          <span>
+            <strong>${issue.title}</strong>
+            <small>${issue.description}</small>
+          </span>
+        </label>
+      `
+    )
+    .join("");
+}
+
+function renderStrategyPicker() {
+  return `
+    <details class="strategy-picker">
+      <summary>
+        <span><strong>Select MTSS strategies</strong><small>Choose any documented instructional, behavioral, or SEL support.</small></span>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m8 10 4 4 4-4" /></svg>
+      </summary>
+      <div class="strategy-picker-content">
+        ${BEHAVIOR_STRATEGY_GROUPS.map(
+          (group) => `
+            <fieldset>
+              <legend>${group.label}</legend>
+              ${group.options
+                .map(
+                  (option) => `
+                    <label class="compact-check">
+                      <input type="checkbox" name="strategies" value="${escapeHtml(option)}" />
+                      <span>${option}</span>
+                    </label>
+                  `
+                )
+                .join("")}
+            </fieldset>
+          `
+        ).join("")}
+      </div>
+    </details>
+  `;
+}
+
+function renderBehaviorConcern() {
+  return `
+    <div class="page concern-page">
+      ${renderPageHeader("Behavior concern", "Record a concern using the HCAS Student Behavior Code.")}
+      ${renderConcernConfirmation()}
+
+      <form id="behavior-concern-form" class="panel concern-form">
+        <div class="concern-source-note">
+          <strong>HCAS Student Behavior Code</strong>
+          <span>Issue levels and required actions below come only from the school code.</span>
+        </div>
+
+        <fieldset class="concern-section">
+          <legend><span>1</span> Students involved</legend>
+          <p class="field-help">Select one or more students. Linked students remain visible to teachers only.</p>
+          ${renderConcernStudentSelector()}
+        </fieldset>
+
+        <fieldset class="concern-section">
+          <legend><span>2</span> Incident details</legend>
+          <div class="form-grid two-columns">
+            <label>Date of incident<input name="incidentDate" type="date" value="${getTodayInputValue()}" required /></label>
+            <label>Concern title<input name="title" maxlength="${MAX_CONCERN_TITLE_LENGTH}" placeholder="Short student-visible title" required /></label>
+          </div>
+          <label class="full-field">Description<textarea name="description" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" placeholder="Describe what happened using objective language" required></textarea></label>
+          <p class="visibility-note"><strong>Student-visible fields:</strong> title, incident date, and description only.</p>
+        </fieldset>
+
+        <fieldset class="concern-section">
+          <legend><span>3</span> Behavior code issues</legend>
+          <div class="issue-level-group">
+            <h3><span class="level-badge level-one">Level I</span> Teacher-managed behaviors</h3>
+            <div class="issue-options">${renderBehaviorIssueOptions(1)}</div>
+          </div>
+          <div class="issue-level-group">
+            <h3><span class="level-badge level-two">Level II</span> Administration-managed behaviors</h3>
+            <div class="issue-options">${renderBehaviorIssueOptions(2)}</div>
+          </div>
+          <label class="compact-check other-check">
+            <input id="behavior-other-issue-toggle" type="checkbox" />
+            <span>Other issue not listed in the code</span>
+          </label>
+          <label class="full-field conditional-field" id="behavior-other-issue-field" hidden>
+            Explain the other issue
+            <textarea name="otherIssue" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3"></textarea>
+          </label>
+        </fieldset>
+
+        <fieldset class="concern-section">
+          <legend><span>4</span> Code-based action</legend>
+          <div class="automatic-action" id="behavior-code-preview" aria-live="polite">
+            <p>Select at least one student and one code issue to retrieve the required action.</p>
+          </div>
+          <label class="full-field">Additional or different step taken <small>Optional</small><textarea name="customAction" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3" placeholder="Add context or record another action"></textarea></label>
+        </fieldset>
+
+        <fieldset class="concern-section">
+          <legend><span>5</span> MTSS strategies used <small>Optional</small></legend>
+          ${renderStrategyPicker()}
+          <label class="compact-check other-check">
+            <input id="behavior-other-strategy-toggle" type="checkbox" />
+            <span>Other strategy</span>
+          </label>
+          <label class="full-field conditional-field" id="behavior-other-strategy-field" hidden>
+            Describe the strategy
+            <textarea name="otherStrategy" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3"></textarea>
+          </label>
+        </fieldset>
+
+        <fieldset class="concern-section confidential-section">
+          <legend><span>6</span> Confidential teacher note <small>Optional</small></legend>
+          <p class="field-help">Visible only in authenticated teacher sessions. This field is excluded from any student-facing summary.</p>
+          <label class="full-field"><span class="sr-only">Confidential teacher note</span><textarea name="confidentialNote" maxlength="${MAX_INTERNAL_NOTE_LENGTH}" rows="4" placeholder="Internal context for teachers only"></textarea></label>
+        </fieldset>
+
+        <div class="form-submit-bar">
+          <span>Publication date and author are added automatically.</span>
+          <button class="primary-button" type="submit">Publish behavior concern</button>
+        </div>
+      </form>
+    </div>
+  `;
+}
+
+function renderAcademicIssueOptions() {
+  return Object.entries(ACADEMIC_CONCERN_EXAMPLES)
+    .map(
+      ([tier, issues]) => `
+        <optgroup label="Tier ${tier} academic concerns">
+          ${issues.map((issue) => `<option value="${escapeHtml(issue)}" data-tier="${tier}">${issue}</option>`).join("")}
+        </optgroup>
+      `
+    )
+    .join("");
+}
+
+function getAcademicStrategyOptions(tier, profileId) {
+  const profile = ACADEMIC_PROFILES.find((item) => item.id === profileId);
+  if (profile) return profile.strategies;
+  if (Number(tier) === 1) return TIER_ONE_INSTRUCTIONAL_STRATEGIES;
+  return TIER_TWO_ACADEMIC_INTERVENTIONS;
+}
+
+function renderAcademicStrategyOptions(tier = 1, profileId = "") {
+  return getAcademicStrategyOptions(tier, profileId)
+    .map((strategy) => `<option value="${escapeHtml(strategy)}">${strategy}</option>`)
+    .join("");
+}
+
+function renderAcademicConcern() {
+  return `
+    <div class="page concern-page">
+      ${renderPageHeader("Academic concern", "Document an academic need and the support already provided.")}
+      ${renderConcernConfirmation()}
+
+      <form id="academic-concern-form" class="panel concern-form">
+        <div class="concern-source-note is-teacher-only">
+          <strong>Teacher-only record</strong>
+          <span>Academic concerns are visible to authenticated teachers and are never included in a student view.</span>
+        </div>
+
+        <fieldset class="concern-section">
+          <legend><span>1</span> Students involved</legend>
+          <p class="field-help">Select one or more students. Each profile receives the concern without exposing the other students involved.</p>
+          ${renderConcernStudentSelector()}
+        </fieldset>
+
+        <fieldset class="concern-section">
+          <legend><span>2</span> Academic concern</legend>
+          <div class="form-grid three-columns">
+            <label>Date of concern<input name="incidentDate" type="date" value="${getTodayInputValue()}" required /></label>
+            <label>MTSS tier<select id="academic-tier" name="tier" required><option value="1">Tier 1</option><option value="2">Tier 2</option><option value="3">Tier 3</option></select></label>
+            <label>Special learning profile <small>Optional</small><select id="academic-profile" name="profileId"><option value="">No profile selected</option>${ACADEMIC_PROFILES.map((profile) => `<option value="${profile.id}">${profile.name}</option>`).join("")}</select></label>
+          </div>
+          <label class="full-field">Concern title<input name="title" maxlength="${MAX_CONCERN_TITLE_LENGTH}" placeholder="Short internal title" required /></label>
+          <label class="full-field">What kind of academic issue?
+            <select id="academic-issue-select" name="issueIds" multiple size="8" aria-describedby="academic-multi-help">
+              ${renderAcademicIssueOptions()}
+            </select>
+          </label>
+          <p class="field-help" id="academic-multi-help">Choose one or more items. The tier filter keeps the relevant examples enabled.</p>
+          <label class="full-field">Other academic issue <small>Optional</small><textarea name="otherIssue" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3" placeholder="Write the concern in your own words if it is not listed"></textarea></label>
+          <label class="full-field">Description<textarea name="description" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" placeholder="Include observations, evidence, or a pattern you have noticed" required></textarea></label>
+        </fieldset>
+
+        <fieldset class="concern-section">
+          <legend><span>3</span> Steps taken</legend>
+          <div class="profile-strategy-heading" id="academic-strategy-heading">
+            <strong>Tier 1 instructional strategies</strong>
+            <span>Select all that were used.</span>
+          </div>
+          <label class="full-field"><span class="sr-only">Recommended intervention strategies</span>
+            <select id="academic-strategy-select" name="strategies" multiple size="8">
+              ${renderAcademicStrategyOptions(1)}
+            </select>
+          </label>
+          <label class="full-field">What step did you take?<textarea name="actionDetails" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" placeholder="Describe when, how, and for how long the support was provided" required></textarea></label>
+          <label class="full-field">Other intervention <small>Optional</small><textarea name="otherStrategy" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3"></textarea></label>
+        </fieldset>
+
+        <fieldset class="concern-section confidential-section">
+          <legend><span>4</span> Internal note <small>Optional</small></legend>
+          <label class="full-field"><span class="sr-only">Internal academic note</span><textarea name="internalNote" maxlength="${MAX_INTERNAL_NOTE_LENGTH}" rows="4" placeholder="Additional teacher-only context"></textarea></label>
+        </fieldset>
+
+        <div class="form-submit-bar">
+          <span>Publication date and author are added automatically.</span>
+          <button class="primary-button" type="submit">Publish academic concern</button>
+        </div>
+      </form>
+    </div>
   `;
 }
 
@@ -758,7 +1149,7 @@ function renderStudentValueHistory(student, value) {
                   <span class="history-teacher-avatar" aria-hidden="true">${teacher.name.charAt(0)}</span>
                   <div>
                     <strong>${teacher.name}</strong>
-                    <time datetime="${award.createdAt}">${formatDateTime(award.createdAt)}</time>
+                    <time datetime="${award.createdAt}">Published ${formatDateTime(award.createdAt)}</time>
                     ${renderRecognitionComment(award.comment)}
                   </div>
                   <b class="points-notification">+${award.points}</b>
@@ -769,6 +1160,143 @@ function renderStudentValueHistory(student, value) {
         </ul>
       ` : '<p class="empty-value-history">No recognitions for this 7C yet.</p>'}
     </div>
+  `;
+}
+
+function renderStudentCoinTable(student) {
+  const awards = getStudentAwards(state, student.id);
+  return `
+    <section class="profile-record-section" aria-labelledby="${student.id}-coin-history">
+      <div class="record-section-heading">
+        <div><h3 id="${student.id}-coin-history">Coins received</h3><span>${awards.length} published recognitions</span></div>
+      </div>
+      <div class="responsive-table">
+        <table class="record-table">
+          <thead><tr><th scope="col">Published</th><th scope="col">HCAS 7C</th><th scope="col">Teacher</th><th scope="col">Points</th><th scope="col">Comment</th></tr></thead>
+          <tbody>
+            ${awards.length
+              ? awards
+                  .map((award) => {
+                    const value = getValue(award.valueId);
+                    const teacher = getTeacher(award.teacherId);
+                    return `
+                      <tr>
+                        <td><time datetime="${award.createdAt}">${formatDateTime(award.createdAt)}</time></td>
+                        <td><span class="table-value"><span class="value-mini-logo" style="--value-logo: url('${value.image}')" aria-hidden="true"></span>${value.name}</span></td>
+                        <td>${teacher.name}</td>
+                        <td><b class="points-notification">+${award.points}</b></td>
+                        <td>${award.comment ? escapeHtml(award.comment) : '<span class="muted-cell">No comment</span>'}</td>
+                      </tr>
+                    `;
+                  })
+                  .join("")
+              : '<tr><td colspan="5" class="empty-table-cell">No coins have been published for this student.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderBehaviorConcernsTable(student) {
+  const concerns = getStudentBehaviorConcerns(state, student.id);
+  return `
+    <section class="profile-record-section" aria-labelledby="${student.id}-behavior-history">
+      <div class="record-section-heading">
+        <div><h3 id="${student.id}-behavior-history">Behavior concerns</h3><span>${concerns.length} notices</span></div>
+        <span class="privacy-badge">Teacher details</span>
+      </div>
+      <div class="responsive-table">
+        <table class="record-table concern-history-table">
+          <thead><tr><th scope="col">Incident</th><th scope="col">Concern</th><th scope="col">Published</th><th scope="col">Author</th></tr></thead>
+          <tbody>
+            ${concerns.length
+              ? concerns
+                  .map((concern) => {
+                    const author = getTeacher(concern.teacherId);
+                    const issues = concern.issueIds.map((issueId) => BEHAVIOR_ISSUES.find((issue) => issue.id === issueId)).filter(Boolean);
+                    const actions = concern.codeActions.filter((action) => action.studentId === student.id);
+                    const linkedStudents = concern.studentIds.filter((studentId) => studentId !== student.id).map(getStudent).filter(Boolean);
+                    return `
+                      <tr>
+                        <td><time datetime="${concern.incidentDate}">${formatDateOnly(concern.incidentDate)}</time></td>
+                        <td>
+                          <strong>${escapeHtml(concern.title)}</strong>
+                          <p class="record-description">${escapeHtml(concern.description)}</p>
+                          <details class="record-details">
+                            <summary>View teacher details</summary>
+                            <div>
+                              <h4>Code issues</h4>
+                              <ul>${issues.map((issue) => `<li><span class="level-badge level-${issue.level === 1 ? "one" : "two"}">Level ${issue.level === 1 ? "I" : "II"}</span> ${issue.title}</li>`).join("")}${concern.otherIssue ? `<li>Other: ${escapeHtml(concern.otherIssue)}</li>` : ""}</ul>
+                              ${actions.length ? `<h4>Required action for ${student.name}</h4><ul>${actions.map((action) => `<li><strong>${action.label}</strong>: ${action.description}</li>`).join("")}</ul>` : ""}
+                              ${concern.strategies.length || concern.otherStrategy ? `<h4>MTSS strategies</h4><ul>${concern.strategies.map((strategy) => `<li>${escapeHtml(strategy)}</li>`).join("")}${concern.otherStrategy ? `<li>${escapeHtml(concern.otherStrategy)}</li>` : ""}</ul>` : ""}
+                              ${concern.customAction ? `<h4>Additional action</h4><p>${escapeHtml(concern.customAction)}</p>` : ""}
+                              ${linkedStudents.length ? `<h4>Other students involved, teacher-only</h4><div class="linked-students">${linkedStudents.map((linkedStudent) => renderStudentIdentity(linkedStudent, { secondary: `Grade ${linkedStudent.grade}`, points: getStudentTotal(state, linkedStudent.id), action: true, className: "is-compact" })).join("")}</div>` : ""}
+                              ${concern.confidentialNote ? `<div class="confidential-note"><strong>Confidential teacher note</strong><p>${escapeHtml(concern.confidentialNote)}</p></div>` : ""}
+                            </div>
+                          </details>
+                        </td>
+                        <td><time datetime="${concern.publishedAt}">${formatDateTime(concern.publishedAt)}</time></td>
+                        <td>${author.name}</td>
+                      </tr>
+                    `;
+                  })
+                  .join("")
+              : '<tr><td colspan="4" class="empty-table-cell">No behavior concerns have been published.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function renderAcademicConcernsTable(student) {
+  const concerns = getStudentAcademicConcerns(state, student.id);
+  return `
+    <section class="profile-record-section teacher-only-records" aria-labelledby="${student.id}-academic-history">
+      <div class="record-section-heading">
+        <div><h3 id="${student.id}-academic-history">Academic concerns</h3><span>${concerns.length} teacher-only records</span></div>
+        <span class="privacy-badge is-private">Teachers only</span>
+      </div>
+      <div class="responsive-table">
+        <table class="record-table concern-history-table">
+          <thead><tr><th scope="col">Concern date</th><th scope="col">Academic record</th><th scope="col">Published</th><th scope="col">Author</th></tr></thead>
+          <tbody>
+            ${concerns.length
+              ? concerns
+                  .map((concern) => {
+                    const author = getTeacher(concern.teacherId);
+                    const profile = ACADEMIC_PROFILES.find((item) => item.id === concern.profileId);
+                    const linkedStudents = concern.studentIds.filter((studentId) => studentId !== student.id).map(getStudent).filter(Boolean);
+                    return `
+                      <tr>
+                        <td><time datetime="${concern.incidentDate}">${formatDateOnly(concern.incidentDate)}</time></td>
+                        <td>
+                          <strong>${escapeHtml(concern.title)}</strong>
+                          <p class="record-description">${escapeHtml(concern.description)}</p>
+                          <details class="record-details">
+                            <summary>View academic details</summary>
+                            <div>
+                              <p><span class="level-badge academic-tier">Tier ${concern.tier}</span>${profile ? ` ${profile.name}` : " General academic concern"}</p>
+                              ${concern.issueIds.length || concern.otherIssue ? `<h4>Academic issues</h4><ul>${concern.issueIds.map((issue) => `<li>${escapeHtml(issue)}</li>`).join("")}${concern.otherIssue ? `<li>${escapeHtml(concern.otherIssue)}</li>` : ""}</ul>` : ""}
+                              ${concern.strategies.length || concern.otherStrategy ? `<h4>Selected interventions</h4><ul>${concern.strategies.map((strategy) => `<li>${escapeHtml(strategy)}</li>`).join("")}${concern.otherStrategy ? `<li>${escapeHtml(concern.otherStrategy)}</li>` : ""}</ul>` : ""}
+                              <h4>Step taken</h4><p>${escapeHtml(concern.actionDetails)}</p>
+                              ${linkedStudents.length ? `<h4>Other students involved, teacher-only</h4><div class="linked-students">${linkedStudents.map((linkedStudent) => renderStudentIdentity(linkedStudent, { secondary: `Grade ${linkedStudent.grade}`, points: getStudentTotal(state, linkedStudent.id), action: true, className: "is-compact" })).join("")}</div>` : ""}
+                              ${concern.internalNote ? `<div class="confidential-note"><strong>Internal teacher note</strong><p>${escapeHtml(concern.internalNote)}</p></div>` : ""}
+                            </div>
+                          </details>
+                        </td>
+                        <td><time datetime="${concern.publishedAt}">${formatDateTime(concern.publishedAt)}</time></td>
+                        <td>${author.name}</td>
+                      </tr>
+                    `;
+                  })
+                  .join("")
+              : '<tr><td colspan="4" class="empty-table-cell">No academic concerns have been published.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>
   `;
 }
 
@@ -824,9 +1352,15 @@ function renderStudentDetail() {
       }).join("")}
     </div>
 
-    <button class="secondary-button profile-send" type="button" data-action="send-to-student" data-student-id="${student.id}">
-      Send points to ${student.name}
-    </button>
+    ${renderStudentCoinTable(student)}
+    ${renderBehaviorConcernsTable(student)}
+    ${renderAcademicConcernsTable(student)}
+
+    <div class="profile-actions">
+      <button class="secondary-button profile-send" type="button" data-action="send-to-student" data-student-id="${student.id}">Send coin</button>
+      <button class="secondary-button" type="button" data-action="behavior-for-student" data-student-id="${student.id}">Behavior concern</button>
+      <button class="secondary-button" type="button" data-action="academic-for-student" data-student-id="${student.id}">Academic concern</button>
+    </div>
   `;
 }
 
@@ -856,7 +1390,7 @@ function renderTeacherValueHistory(value, awards) {
                     })}
                     ${renderRecognitionComment(award.comment)}
                   </div>
-                  <time datetime="${award.createdAt}">${formatDateTime(award.createdAt)}</time>
+                  <time datetime="${award.createdAt}">Published ${formatDateTime(award.createdAt)}</time>
                 </li>
               `;
             })
@@ -944,7 +1478,7 @@ function renderTeacherActivity() {
                       })}
                       ${renderRecognitionComment(award.comment)}
                     </div>
-                    <time class="recognition-time" datetime="${award.createdAt}">${formatDateTime(award.createdAt)}</time>
+                    <time class="recognition-time" datetime="${award.createdAt}">Published ${formatDateTime(award.createdAt)}</time>
                     <button
                       class="unsend-button"
                       type="button"
@@ -979,6 +1513,81 @@ function refreshStudentBrowser() {
   count.textContent = formatStudentCount(getFilteredStudents().length);
 }
 
+function updateBehaviorCodePreview() {
+  const form = document.querySelector("#behavior-concern-form");
+  const preview = document.querySelector("#behavior-code-preview");
+  if (!form || !preview) return;
+
+  const formData = new FormData(form);
+  const studentIds = formData.getAll("studentIds");
+  const issueIds = formData.getAll("issueIds");
+  if (!studentIds.length || !issueIds.length) {
+    preview.innerHTML = "<p>Select at least one student and one code issue to retrieve the required action.</p>";
+    return;
+  }
+
+  const actions = getBehaviorCodeActions(state, studentIds, issueIds);
+  preview.innerHTML = studentIds
+    .map((studentId) => {
+      const student = getStudent(studentId);
+      const studentActions = actions.filter((action) => action.studentId === studentId);
+      return `
+        <section>
+          ${renderStudentIdentity(student, {
+            secondary: `Grade ${student.grade}`,
+            points: getStudentTotal(state, student.id),
+            className: "is-compact"
+          })}
+          <ul>
+            ${studentActions
+              .map((action) => {
+                const issue = BEHAVIOR_ISSUES.find((item) => item.id === action.issueId);
+                const dishonestyNote = action.issueId === "dishonesty" && action.occurrence === 1
+                  ? " Academic dishonesty bypasses the preliminary warning/detention and proceeds directly to this step."
+                  : "";
+                return `<li><strong>${issue.title}: ${action.label}</strong><span>${action.description}${dishonestyNote}</span></li>`;
+              })
+              .join("")}
+          </ul>
+        </section>
+      `;
+    })
+    .join("");
+}
+
+function updateAcademicFormOptions() {
+  const tierSelect = document.querySelector("#academic-tier");
+  const profileSelect = document.querySelector("#academic-profile");
+  const issueSelect = document.querySelector("#academic-issue-select");
+  const strategySelect = document.querySelector("#academic-strategy-select");
+  const heading = document.querySelector("#academic-strategy-heading");
+  if (!tierSelect || !profileSelect || !issueSelect || !strategySelect || !heading) return;
+
+  const tier = Number(tierSelect.value);
+  const profileId = profileSelect.value;
+  issueSelect.querySelectorAll("option[data-tier]").forEach((option) => {
+    const enabled = Number(option.dataset.tier) === tier;
+    option.disabled = !enabled;
+    if (!enabled) option.selected = false;
+  });
+
+  const profile = ACADEMIC_PROFILES.find((item) => item.id === profileId);
+  strategySelect.innerHTML = renderAcademicStrategyOptions(tier, profileId);
+  heading.innerHTML = profile
+    ? `<strong>Five recommended intervention strategies</strong><span>${profile.name}</span>`
+    : `<strong>${tier === 1 ? "Tier 1 instructional strategies" : "Tier 2 academic interventions"}</strong><span>Select all that were used.</span>`;
+}
+
+function toggleConditionalField(toggleId, fieldId) {
+  const toggle = document.querySelector(`#${toggleId}`);
+  const field = document.querySelector(`#${fieldId}`);
+  if (!toggle || !field) return;
+  field.hidden = !toggle.checked;
+  if (!toggle.checked) {
+    field.querySelectorAll("input, textarea").forEach((control) => (control.value = ""));
+  }
+}
+
 function render() {
   const isLoggedIn = Boolean(activeTeacher);
   document.body.classList.toggle("is-logged-out", !isLoggedIn);
@@ -1000,10 +1609,22 @@ function render() {
     else button.removeAttribute("aria-current");
   });
 
+  document.querySelector(".bottom-concern-menu")?.classList.toggle(
+    "is-active",
+    ["behavior-concern", "academic-concern"].includes(activeView)
+  );
+
   if (activeView === "send") viewRoot.innerHTML = renderSend();
+  else if (activeView === "behavior-concern") viewRoot.innerHTML = renderBehaviorConcern();
+  else if (activeView === "academic-concern") viewRoot.innerHTML = renderAcademicConcern();
   else if (activeView === "students") viewRoot.innerHTML = renderStudents();
   else if (activeView === "activity") viewRoot.innerHTML = renderTeacherActivity();
   else viewRoot.innerHTML = renderDashboard();
+
+  window.requestAnimationFrame(() => {
+    if (activeView === "behavior-concern") updateBehaviorCodePreview();
+    if (activeView === "academic-concern") updateAcademicFormOptions();
+  });
 }
 
 loginForm.addEventListener("submit", (event) => {
@@ -1032,6 +1653,10 @@ document.addEventListener("click", (event) => {
     if (viewButton.dataset.view === "send" && activeView !== "send") {
       resetSendSelection();
     }
+    if (["behavior-concern", "academic-concern"].includes(viewButton.dataset.view)) {
+      concernStudentPreset = null;
+      lastConcernConfirmation = null;
+    }
     setView(viewButton.dataset.view);
     return;
   }
@@ -1047,6 +1672,8 @@ document.addEventListener("click", (event) => {
       resetSendSelection();
       expandedStudentValueId = null;
       expandedTeacherValueId = null;
+      concernStudentPreset = null;
+      lastConcernConfirmation = null;
       window.location.hash = "dashboard";
       render();
       document.querySelector("#login-username").focus();
@@ -1054,6 +1681,14 @@ document.addEventListener("click", (event) => {
     case "go-send":
       resetSendSelection();
       setView("send");
+      break;
+    case "toggle-ranking-roster":
+      rankingExpanded = !rankingExpanded;
+      render();
+      break;
+    case "clear-ranking-date":
+      rankingDateFilter = "";
+      render();
       break;
     case "toggle-house-leaders": {
       const houseId = actionTarget.dataset.houseId;
@@ -1124,11 +1759,13 @@ document.addEventListener("click", (event) => {
         comment
       );
       saveState();
+      const publishedAt = state.awards.at(-1).createdAt;
       lastConfirmation = {
         studentId,
         valueId: selectedValueId,
         points: pointsSent,
-        comment: comment.trim()
+        comment: comment.trim(),
+        publishedAt
       };
       sendStudentIds = sendStudentIds.filter((selectedId) => selectedId !== studentId);
 
@@ -1222,6 +1859,16 @@ document.addEventListener("click", (event) => {
       sendHouseFilter = "all";
       setView("send");
       break;
+    case "behavior-for-student":
+      concernStudentPreset = actionTarget.dataset.studentId;
+      lastConcernConfirmation = null;
+      setView("behavior-concern");
+      break;
+    case "academic-for-student":
+      concernStudentPreset = actionTarget.dataset.studentId;
+      lastConcernConfirmation = null;
+      setView("academic-concern");
+      break;
   }
 });
 
@@ -1232,6 +1879,29 @@ viewRoot.addEventListener("change", (event) => {
   } else if (event.target.matches("#send-house-filter")) {
     sendHouseFilter = event.target.value;
     render();
+  } else if (event.target.matches("#ranking-value-filter")) {
+    rankingValueFilter = event.target.value;
+    render();
+  } else if (event.target.matches("#ranking-grade-filter")) {
+    rankingGradeFilter = event.target.value;
+    render();
+  } else if (event.target.matches("#ranking-date-filter")) {
+    rankingDateFilter = event.target.value;
+    render();
+  } else if (
+    event.target.matches('#behavior-concern-form [name="studentIds"]') ||
+    event.target.matches('#behavior-concern-form [name="issueIds"]')
+  ) {
+    updateBehaviorCodePreview();
+  } else if (event.target.matches("#behavior-other-issue-toggle")) {
+    toggleConditionalField("behavior-other-issue-toggle", "behavior-other-issue-field");
+  } else if (event.target.matches("#behavior-other-strategy-toggle")) {
+    toggleConditionalField("behavior-other-strategy-toggle", "behavior-other-strategy-field");
+  } else if (event.target.matches("#academic-profile")) {
+    if (event.target.value) document.querySelector("#academic-tier").value = "3";
+    updateAcademicFormOptions();
+  } else if (event.target.matches("#academic-tier")) {
+    updateAcademicFormOptions();
   }
 });
 
@@ -1252,8 +1922,77 @@ viewRoot.addEventListener("input", (event) => {
 });
 
 viewRoot.addEventListener("submit", (event) => {
-  if (!event.target.matches("#award-form")) return;
-  event.preventDefault();
+  if (event.target.matches("#award-form")) {
+    event.preventDefault();
+    return;
+  }
+
+  if (event.target.matches("#behavior-concern-form")) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    try {
+      state = addBehaviorConcern(state, {
+        studentIds: formData.getAll("studentIds"),
+        issueIds: formData.getAll("issueIds"),
+        otherIssue: formData.get("otherIssue"),
+        title: formData.get("title"),
+        description: formData.get("description"),
+        strategies: formData.getAll("strategies"),
+        otherStrategy: formData.get("otherStrategy"),
+        customAction: formData.get("customAction"),
+        confidentialNote: formData.get("confidentialNote"),
+        teacherId: activeTeacher.id,
+        incidentDate: formData.get("incidentDate")
+      });
+      const concern = state.behaviorConcerns.at(-1);
+      saveState();
+      lastConcernConfirmation = {
+        type: "Behavior concern",
+        studentIds: concern.studentIds,
+        publishedAt: concern.publishedAt
+      };
+      concernStudentPreset = null;
+      render();
+      showToast("Behavior concern published.");
+    } catch (error) {
+      showToast(error.message);
+    }
+    return;
+  }
+
+  if (event.target.matches("#academic-concern-form")) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    try {
+      state = addAcademicConcern(state, {
+        studentIds: formData.getAll("studentIds"),
+        tier: formData.get("tier"),
+        issueIds: formData.getAll("issueIds"),
+        otherIssue: formData.get("otherIssue"),
+        profileId: formData.get("profileId"),
+        title: formData.get("title"),
+        description: formData.get("description"),
+        strategies: formData.getAll("strategies"),
+        otherStrategy: formData.get("otherStrategy"),
+        actionDetails: formData.get("actionDetails"),
+        internalNote: formData.get("internalNote"),
+        teacherId: activeTeacher.id,
+        incidentDate: formData.get("incidentDate")
+      });
+      const concern = state.academicConcerns.at(-1);
+      saveState();
+      lastConcernConfirmation = {
+        type: "Academic concern",
+        studentIds: concern.studentIds,
+        publishedAt: concern.publishedAt
+      };
+      concernStudentPreset = null;
+      render();
+      showToast("Academic concern published.");
+    } catch (error) {
+      showToast(error.message);
+    }
+  }
 });
 
 window.addEventListener("hashchange", () => {

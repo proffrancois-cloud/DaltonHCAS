@@ -1,7 +1,7 @@
 {
-  "name": "DaltonHCAS House Points",
+  "name": "DaltonHCAS House Coin",
   "short_name": "DaltonHCAS",
-  "description": "HCAS house points and 7C recognition app for teachers.",
+  "description": "HCAS teacher platform for house coins, behavior concerns, academic concerns, and student support records.",
   "id": "./",
   "start_url": "./#dashboard",
   "scope": "./",

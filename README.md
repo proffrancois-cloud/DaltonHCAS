@@ -1,8 +1,8 @@
-# DaltonHCAS House Points
+# DaltonHCAS House Coin
 
-A self-contained local app for authenticated HCAS teachers to record 7C recognitions, choose 10, 20, 30, 40, or 50 points, filter the student emblem gallery by grade and house, view the four-house leaderboard, review student breakdowns, and unsend items from their personal award history.
+A self-contained app for authenticated HCAS teachers to record 7C recognitions, behavior concerns based on the HCAS Student Behavior Code, and teacher-only academic concerns based on the school's MTSS references. It includes multi-student records, automatic behavior-code actions, selectable MTSS strategies, publication dates, student profiles, and a filterable school coin ranking.
 
-The requested grade split totals 11 students, so the demo includes `random1` through `random11`: 2 in Grade 9 and 3 each in Grades 10, 11, and 12. Data is stored only in the browser's local storage, so recognitions remain after a refresh on the same browser. DaltonHCAS is also a Progressive Web App: once published over HTTPS, it can be installed from Safari or Chrome and opened from a phone's home screen.
+The requested grade split totals 11 students, so the demo includes `random1` through `random11`: 2 in Grade 9 and 3 each in Grades 10, 11, and 12. Data is stored only in the browser's local storage, so coins and concerns remain after a refresh on the same browser. DaltonHCAS is also a Progressive Web App: once published over HTTPS, it can be installed from Safari or Chrome and opened from a phone's home screen.
 
 ## Teacher accounts
 
@@ -38,4 +38,4 @@ No package installation is required. The app uses only browser APIs and Node's b
 
 ## Deployment note
 
-This repository is a demonstration. Authentication and data storage are client-side: accounts, passwords, students, and recognitions are not protected by a server and data does not synchronize between devices. A production school deployment needs server-side authentication, a shared database, access control, and backups.
+This repository is a demonstration. Authentication and data storage are client-side: accounts, passwords, students, coins, confidential notes, and concern records are not protected by a server and data does not synchronize between devices. The interface separates teacher-only and student-safe information, but a production school deployment needs server-side authentication, a shared database, role-based access control, audit logs, encryption, retention rules, and backups before real student data is entered.
