@@ -21,6 +21,8 @@ Teachers can see all Grade 6–12 calendar entries, filter by grade, assign stud
 
 [Open DaltonHCAS](https://proffrancois-cloud.github.io/DaltonHCAS/)
 
+The GitHub Pages URL is the public demonstration and never receives the private roster. The private school preview is deployed separately on Vercel with server-side HTTP Basic authentication. Its username, password, and compressed roster are Vercel environment secrets and are not committed to this repository.
+
 ### Install on a phone
 
 - iPhone/iPad: open the link in Safari, tap **Share**, then **Add to Home Screen**.

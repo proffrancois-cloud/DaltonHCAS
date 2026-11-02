@@ -147,16 +147,19 @@ function isRosterStudent(student) {
 }
 
 async function loadLocalRoster() {
-  try {
-    const response = await fetch("./private/roster.json", { cache: "no-store" });
-    if (!response.ok) return null;
-    const roster = await response.json();
-    if (!Array.isArray(roster.students) || !roster.students.length) return null;
-    if (!roster.students.every(isRosterStudent)) return null;
-    return roster.students.map((student) => ({ ...student }));
-  } catch {
-    return null;
+  for (const source of ["/api/roster", "./private/roster.json"]) {
+    try {
+      const response = await fetch(source, { cache: "no-store", credentials: "same-origin" });
+      if (!response.ok) continue;
+      const roster = await response.json();
+      if (!Array.isArray(roster.students) || !roster.students.length) continue;
+      if (!roster.students.every(isRosterStudent)) continue;
+      return roster.students.map((student) => ({ ...student }));
+    } catch {
+      // Try the next private roster source, then fall back to fictional demo data.
+    }
   }
+  return null;
 }
 
 export const STUDENTS = (await loadLocalRoster()) ?? DEMO_STUDENTS;

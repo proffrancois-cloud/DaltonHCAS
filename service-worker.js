@@ -1,4 +1,4 @@
-const CACHE_NAME = "dalton-hcas-v4";
+const CACHE_NAME = "dalton-hcas-v5";
 
 const APP_SHELL = [
   "./",
@@ -47,6 +47,11 @@ self.addEventListener("fetch", (event) => {
 
   const requestUrl = new URL(event.request.url);
   if (requestUrl.origin !== self.location.origin) return;
+
+  if (requestUrl.pathname.startsWith("/api/")) {
+    event.respondWith(fetch(event.request, { cache: "no-store" }));
+    return;
+  }
 
   if (event.request.mode === "navigate") {
     event.respondWith(fetch(event.request).catch(() => caches.match("./index.html")));

@@ -2412,10 +2412,16 @@ window.addEventListener("hashchange", () => {
 
 render();
 
-if ("serviceWorker" in navigator && window.isSecureContext) {
+const isPrivateVercelDeployment = window.location.hostname.endsWith(".vercel.app");
+
+if ("serviceWorker" in navigator && window.isSecureContext && !isPrivateVercelDeployment) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("./service-worker.js").catch((error) => {
       console.warn("DaltonHCAS could not enable offline access.", error);
     });
+  });
+} else if ("serviceWorker" in navigator && isPrivateVercelDeployment) {
+  navigator.serviceWorker.getRegistrations().then((registrations) => {
+    registrations.forEach((registration) => registration.unregister());
   });
 }
