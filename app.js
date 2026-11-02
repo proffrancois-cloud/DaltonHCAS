@@ -15,21 +15,23 @@ import {
   POINT_OPTIONS,
   SEL_CONCERN_OPTIONS,
   TEACHERS,
+  TEACHER_ROLE_LABELS,
   TEACHER_ROLES,
   TIER_ONE_INSTRUCTIONAL_STRATEGIES,
   TIER_TWO_ACADEMIC_INTERVENTIONS,
   VALUES,
-  addAcademicConcern,
-  addCustomCalendarEvent,
-  addLabAssignment,
-  addAward,
-  addBehaviorConcern,
-  addSelCheckIn,
-  addSelConcern,
+  addAcademicConcern as localAddAcademicConcern,
+  addCustomCalendarEvent as localAddCustomCalendarEvent,
+  addLabAssignment as localAddLabAssignment,
+  addAward as localAddAward,
+  addBehaviorConcern as localAddBehaviorConcern,
+  addSelCheckIn as localAddSelCheckIn,
+  addSelConcern as localAddSelConcern,
   authenticateUser,
   canEditCalendarEvent,
-  createStudentAccount,
-  createTeacherAccount,
+  canEditStudentRecord,
+  createStudentAccount as localCreateStudentAccount,
+  createTeacherAccount as localCreateTeacherAccount,
   createInitialState,
   getBehaviorCodeActions,
   getCalendarEvents,
@@ -47,16 +49,49 @@ import {
   getTeacherPermissions,
   getTeacherStats,
   migrateStoredState,
-  removeAward,
-  removeLabAssignment,
-  setHouseLeader,
-  transferStudentHouse,
-  updateCalendarEventDetails
+  removeAward as localRemoveAward,
+  removeLabAssignment as localRemoveLabAssignment,
+  setHouseLeader as localSetHouseLeader,
+  transferStudentHouse as localTransferStudentHouse,
+  updateAward as localUpdateAward,
+  updateCalendarEventDetails as localUpdateCalendarEventDetails,
+  updateConcern as localUpdateConcern,
+  updateTeacherAccountStatus as localUpdateTeacherAccountStatus
 } from "./data.js";
+import { cloudEnabled, cloudLogin, cloudCall, cloudChangePassword, cloudLogout, hasCloudSession } from "./cloud-client.js";
+import { SMART_FIELDS, isSupervisor } from "./support-rules.js";
+import { renderIepHeart, renderSupportProfile, renderSupportNotifications } from "./support-ui.js";
 
-const STORAGE_KEY = "hcas-house-points-v7";
-const LEGACY_STORAGE_KEYS = ["hcas-house-points-v6", "hcas-house-points-v5", "hcas-house-points-v4", "hcas-house-points-v3", "hcas-house-points-v2"];
-const SESSION_KEY = "hcas-house-points-user-v7";
+let pendingCloudCommand = null;
+let cloudSnapshot = null;
+let cloudBusy = false;
+let mustChangePassword = false;
+function stageCloud(action, payload, nextState) {
+  if (cloudEnabled) pendingCloudCommand = { action, payload };
+  return nextState;
+}
+const addAward = (s, studentId, valueId, teacherId, points, now, comment, editorIds) => stageCloud("award-add", { studentId, valueId, points, comment, editorIds }, localAddAward(s, studentId, valueId, teacherId, points, now, comment, editorIds));
+const removeAward = (s, id, teacherId) => stageCloud("award-remove", { id }, localRemoveAward(s, id, teacherId));
+const updateAward = (s, id, teacherId, changes) => stageCloud("award-update", { id, changes }, localUpdateAward(s, id, teacherId, changes));
+const stageConcern = (type, fn, s, input) => stageCloud("concern-add", { type, input: { ...input, requestSmartGoal: Boolean(document.querySelector('[name="requestSmartGoal"]:checked')) } }, fn(s, input));
+const addBehaviorConcern = (s, input) => stageConcern("behavior", localAddBehaviorConcern, s, input);
+const addAcademicConcern = (s, input) => stageConcern("academic", localAddAcademicConcern, s, input);
+const addSelConcern = (s, input) => stageConcern("sel", localAddSelConcern, s, input);
+const updateConcern = (s, type, id, teacherId, changes) => stageCloud("concern-update", { type, id, changes }, localUpdateConcern(s, type, id, teacherId, changes));
+const addSelCheckIn = (s, user, input) => stageCloud("check-in", input, localAddSelCheckIn(s, user, input));
+const createStudentAccount = (s, user, input) => stageCloud("student-create", input, localCreateStudentAccount(s, user, input));
+const createTeacherAccount = (s, user, input) => stageCloud("teacher-create", input, localCreateTeacherAccount(s, user, input));
+const updateTeacherAccountStatus = (s, user, id, changes) => stageCloud("teacher-status", { id, changes }, localUpdateTeacherAccountStatus(s, user, id, changes));
+const transferStudentHouse = (s, user, id, houseId) => stageCloud("student-transfer", { id, houseId }, localTransferStudentHouse(s, user, id, houseId));
+const setHouseLeader = (s, houseId, studentId, enabled = true) => stageCloud("house-leader", { houseId, studentId, enabled }, localSetHouseLeader(s, houseId, studentId, enabled));
+const addLabAssignment = (s, input) => stageCloud("lab-add", input, localAddLabAssignment(s, input));
+const removeLabAssignment = (s, id) => stageCloud("lab-remove", { id }, localRemoveLabAssignment(s, id));
+const addCustomCalendarEvent = (s, user, input) => stageCloud("event-add", input, localAddCustomCalendarEvent(s, user, input));
+const updateCalendarEventDetails = (s, user, event, changes) => stageCloud("event-update", { id: event.id, changes }, localUpdateCalendarEventDetails(s, user, event, changes));
+
+const STORAGE_KEY = "hcas-house-points-v9";
+const LEGACY_STORAGE_KEYS = ["hcas-house-points-v8", "hcas-house-points-v7", "hcas-house-points-v6", "hcas-house-points-v5", "hcas-house-points-v4", "hcas-house-points-v3", "hcas-house-points-v2"];
+const SESSION_KEY = "hcas-house-points-user-v9";
 const LEGACY_SESSION_KEY = "hcas-house-points-teacher";
 const viewRoot = document.querySelector("#view-root");
 const toast = document.querySelector("#toast");
@@ -67,7 +102,7 @@ const teacherAvatar = document.querySelector("#teacher-avatar");
 const topbarHouseScores = document.querySelector("#topbar-house-scores");
 
 let state = loadState();
-let activeUser = loadUserSession();
+let activeUser = cloudEnabled ? null : loadUserSession();
 let activeTeacher = activeUser?.type === "teacher" ? activeUser : null;
 let activeView = getViewFromHash();
 let selectedValueId = null;
@@ -77,12 +112,18 @@ let sendGradeFilter = "all";
 let sendHouseFilter = "all";
 let sendStudentQuery = "";
 let sendComment = "";
+let sendEditorIds = [];
 let profileStudentId = null;
 let studentQuery = "";
 let houseFilter = "all";
 let studentGradeFilter = "all";
 let expandedHouseId = null;
 let expandedStudentValueId = null;
+const profileConcernFilters = {
+  behavior: "all",
+  academic: "all",
+  sel: "all"
+};
 let expandedTeacherValueId = null;
 let lastConfirmation = null;
 let rankingValueFilter = "all";
@@ -103,9 +144,11 @@ let selectedCalendarEventId = null;
 let calendarCreateOpen = false;
 let selCheckInOpen = false;
 let lastCreatedAccount = null;
+let recordEditTarget = null;
 let toastTimer;
 
 function loadState() {
+  if (cloudEnabled) return createInitialState();
   for (const key of [STORAGE_KEY, ...LEGACY_STORAGE_KEYS]) {
     try {
       const storedValue = localStorage.getItem(key);
@@ -125,15 +168,124 @@ function loadState() {
   return initialState;
 }
 
-function saveState() {
+async function saveState() {
+  if (cloudEnabled) {
+    if (!pendingCloudCommand) throw new Error("No server action was selected");
+    const command = pendingCloudCommand;
+    pendingCloudCommand = null;
+    cloudBusy = true;
+    try { applyCloudResult(await cloudCall(command.action, { payload: command.payload })); }
+    catch (error) { if (cloudSnapshot) state = structuredClone(cloudSnapshot); throw error; }
+    finally { cloudBusy = false; }
+    return;
+  }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-function commitState(nextState, message = "") {
+async function commitState(nextState, message = "") {
   state = nextState;
-  saveState();
+  await saveState();
   render();
   if (message) showToast(message);
+}
+
+function applyCloudResult(result) {
+  activeUser = result.user;
+  activeTeacher = activeUser?.type === "teacher" ? activeUser : null;
+  mustChangePassword = Boolean(result.mustChangePassword);
+  if (result.newAccountCredential) lastCreatedAccount = result.newAccountCredential;
+  if (result.state) { state = result.state; cloudSnapshot = structuredClone(result.state); }
+}
+
+async function openIepReader(documentId) {
+  if (activeUser?.type !== "teacher") return;
+  const doc = (state.iepDocuments ?? []).find(item => item.id === documentId);
+  if (!doc) return;
+  const blob = await cloudCall("iep-read", { id: documentId });
+  const objectUrl = URL.createObjectURL(blob);
+  const previousFocus = document.activeElement;
+  document.querySelector("#iep-reader")?.close();
+  const dialog = document.createElement("dialog");
+  dialog.id = "iep-reader";
+  dialog.className = "iep-reader";
+  dialog.setAttribute("aria-labelledby", "iep-reader-title");
+  dialog.innerHTML = `<header><div><small>Private IEP · staff only</small><h2 id="iep-reader-title">${escapeHtml(doc.name)}</h2></div><button class="secondary-button" type="button" data-close-reader aria-label="Close PDF reader">×</button></header><iframe title="Private IEP PDF reader" src="${objectUrl}#toolbar=1"></iframe><footer><a class="secondary-button" href="${objectUrl}" download="${escapeHtml(doc.name)}">Download PDF</a></footer>`;
+  dialog.querySelector("[data-close-reader]").addEventListener("click", () => dialog.close());
+  dialog.addEventListener("close", () => { URL.revokeObjectURL(objectUrl); dialog.remove(); previousFocus?.focus(); }, { once: true });
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
+async function handleSupportClick(button) {
+  const action = button.dataset.action;
+  if (action === "open-iep" || action === "read-iep-document") {
+    const docId = button.dataset.documentId ?? [...(state.iepDocuments ?? [])].reverse().find(item => item.studentId === button.dataset.studentId)?.id;
+    if (docId) await openIepReader(docId);
+  } else if (action === "read-support-notification") {
+    await runCloudAction("notification-read", { key: button.dataset.notificationKey });
+  } else if (action === "goal-access") {
+    await runCloudAction("goal-access", { id: button.dataset.goalId, field: button.dataset.field, canEdit: button.dataset.allow === "true" });
+  } else if (action === "urgent-support") {
+    const sent = await runCloudAction("urgent-support");
+    if (sent) showToast("Your support request was sent to supervising staff and your trusted adult, if selected.");
+  } else if (action === "open-support-profile") {
+    setView("students", { studentId: button.dataset.studentId });
+  } else if (action === "follow-up-goal") {
+    const form = viewRoot.querySelector(`[data-support-form="goal-add"][data-student-id="${button.dataset.studentId}"]`);
+    if (form) {
+      form.closest("details").open = true;
+      form.elements.previousGoalId.value = button.dataset.goalId;
+      form.elements.title.value = `Follow-up: ${(state.smartGoals ?? []).find(item => item.id === button.dataset.goalId)?.title ?? "Support goal"}`;
+      form.elements.title.focus();
+      form.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  } else return false;
+  return true;
+}
+
+async function handleSupportSubmit(form) {
+  if (cloudBusy) return;
+  const formData = new FormData(form), type = form.dataset.supportForm;
+  const errorElement = form.querySelector(".support-error");
+  errorElement.textContent = "";
+  cloudBusy = true;
+  const button = form.querySelector('[type="submit"]');
+  button.disabled = true;
+  try {
+    let result;
+    if (type === "password") {
+      if (formData.get("password") !== formData.get("confirmation")) throw new Error("The two passwords do not match");
+      result = await cloudChangePassword(formData.get("password"));
+    } else if (type === "iep-upload") {
+      const file = formData.get("pdf");
+      if (!file?.size || !/\.pdf$/i.test(file.name) || file.size > 10 * 1024 * 1024) throw new Error("Choose a PDF up to 10 MB");
+      const encoded = await readFileAsDataUrl(file, 10 * 1024 * 1024, "IEP PDF");
+      result = await cloudCall("iep-upload", { studentId: form.dataset.studentId, name: file.name, base64: encoded.split(",")[1] });
+    } else {
+      const payload = type === "goal-add" ? {
+        studentId: form.dataset.studentId, title: formData.get("title"), dueDate: formData.get("dueDate"),
+        fields: Object.fromEntries(Object.keys(SMART_FIELDS).map(key => [key, formData.get(key)])),
+        studentEditableFields: formData.getAll("studentEditableFields"),
+        sourceConcernId: formData.get("sourceConcernId") || null, previousGoalId: formData.get("previousGoalId") || null
+      } : type === "goal-field" ? { id: form.dataset.goalId, field: form.dataset.field, text: formData.get("text"), dueDate: formData.get("dueDate") || undefined }
+        : type === "goal-close" ? { id: form.dataset.goalId, status: formData.get("status"), note: formData.get("note") }
+        : type === "account-reset" ? { id: formData.get("id") } : { teacherId: formData.get("teacherId") };
+      result = await cloudCall(type, { payload });
+    }
+    applyCloudResult(result);
+    render();
+    showToast("Saved to your school account.");
+  } catch (error) { errorElement.textContent = error.message; }
+  finally { cloudBusy = false; button.disabled = false; }
+}
+
+async function runCloudAction(action, payload = {}) {
+  if (!cloudEnabled) { showToast("This feature uses your secure school account on the published app."); return; }
+  if (cloudBusy) return;
+  cloudBusy = true;
+  try { applyCloudResult(await cloudCall(action, { payload })); render(); return true; }
+  catch (error) { showToast(error.message); return false; }
+  finally { cloudBusy = false; }
 }
 
 function loadUserSession() {
@@ -178,10 +330,12 @@ function getViewFromHash() {
 
 function setView(view, options = {}) {
   if (!activeUser) return;
-  if (activeUser.type === "student" && view !== "dashboard") view = "dashboard";
+  if (activeUser.type === "student" && !["dashboard", "students"].includes(view)) view = "dashboard";
   if (view === "administration" && !canAccessAdministration()) view = "dashboard";
   activeView = view;
+  recordEditTarget = null;
   if (options.studentId) {
+    if (profileStudentId !== options.studentId) resetProfileConcernFilters();
     profileStudentId = options.studentId;
   }
   window.location.hash = view;
@@ -209,6 +363,52 @@ function getTeacher(teacherId) {
 function getActiveTeacherPermissions() {
   const teacher = activeUser?.type === "teacher" ? getTeacher(activeUser.id) : null;
   return getTeacherPermissions(teacher);
+}
+
+function getRequiredRecordEditors() {
+  return (state.teachers ?? TEACHERS).filter(
+    (teacher) => getTeacherPermissions(teacher).canEditAllStudentRecords
+  );
+}
+
+function renderEditorAccessPicker({ selectedIds = [], authorId = activeTeacher?.id } = {}) {
+  const requiredEditors = getRequiredRecordEditors();
+  const optionalEditors = (state.teachers ?? TEACHERS).filter(
+    (teacher) =>
+      teacher.id !== authorId &&
+      !getTeacherPermissions(teacher).canEditAllStudentRecords
+  );
+  const author = getTeacher(authorId);
+  const alwaysNames = [author, ...requiredEditors]
+    .filter(Boolean)
+    .filter((teacher, index, list) => list.findIndex((item) => item.id === teacher.id) === index);
+  const selected = new Set(selectedIds ?? []);
+
+  return `
+    <div class="editor-access-picker">
+      <div class="editor-access-heading">
+        <div><strong>Who can edit this record?</strong><span>All teachers can view it. Editing is limited.</span></div>
+        <span class="privacy-badge is-private">Staff access</span>
+      </div>
+      <div class="required-editor-list" aria-label="Editors who always have access">
+        ${alwaysNames.map((teacher) => `<span title="This access cannot be removed"><b aria-hidden="true">🔒</b>${escapeHtml(teacher.name)}<small>${teacher.id === authorId ? "Author" : TEACHER_ROLE_LABELS[teacher.role]}</small></span>`).join("")}
+        ${!requiredEditors.some((teacher) => teacher.role === "teacher-supervising") ? '<span class="is-policy"><b aria-hidden="true">🔒</b>Teacher supervising<small>Automatically included when assigned</small></span>' : ""}
+      </div>
+      <details class="optional-editor-picker" ${selected.size ? "open" : ""}>
+        <summary>Grant editing access to other staff <span>${selected.size ? `${selected.size} selected` : "Optional"}</span></summary>
+        <div class="optional-editor-grid">
+          ${optionalEditors.length
+            ? optionalEditors.map((teacher) => `<label><input type="checkbox" name="editorIds" value="${teacher.id}" ${selected.has(teacher.id) ? "checked" : ""} /><span><strong>${escapeHtml(teacher.name)}</strong><small>${TEACHER_ROLE_LABELS[teacher.role] ?? "Regular teacher"}</small></span></label>`).join("")
+            : "<p>No additional staff accounts are available.</p>"}
+        </div>
+      </details>
+    </div>
+  `;
+}
+
+function renderRecordAccessSummary(record) {
+  const additionalEditors = (record.editorIds ?? []).map(getTeacher).filter(Boolean);
+  return `<p class="record-access-summary"><span aria-hidden="true">🔒</span> Editable by the author, Super admins, Teacher supervising${additionalEditors.length ? `, and ${additionalEditors.map((teacher) => escapeHtml(teacher.name)).join(", ")}` : ""}.</p>`;
 }
 
 function canAccessAdministration() {
@@ -266,18 +466,18 @@ function renderStudentIdentity(
   `;
 
   if (action) {
-    return `
+    return `<span class="student-with-support">
       <button
         class="student-identity ${className}"
         type="button"
         data-action="open-student"
         data-student-id="${student.id}"
         aria-label="Open ${student.name}'s profile"
-      >${content}</button>
+      >${content}</button>${renderIepHeart(state, activeUser, student, escapeHtml)}</span>
     `;
   }
 
-  return `<div class="student-identity ${className}">${content}</div>`;
+  return `<span class="student-with-support"><span class="student-identity ${className}">${content}</span>${renderIepHeart(state, activeUser, student, escapeHtml)}</span>`;
 }
 
 function getFilteredSendStudents() {
@@ -389,6 +589,7 @@ function resetSendSelection() {
   selectedPoints = null;
   sendStudentIds = [];
   sendComment = "";
+  sendEditorIds = [];
   lastConfirmation = null;
 }
 
@@ -481,10 +682,11 @@ function getCalendarRoleLabel() {
   if (!student) {
     const teacher = activeUser?.type === "teacher" ? getTeacher(activeUser.id) : null;
     if (teacher?.role === "super-admin") return "Super admin · Full school calendar";
+    if (teacher?.role === "teacher-supervising") return "Teacher supervising · Full school calendar";
     if (teacher?.role === "house-leader") {
-      return `${getHouse(teacher.houseId)?.name ?? "House"} leader · Full school calendar`;
+      return `Leader teacher · ${getHouse(teacher.houseId)?.name ?? "House"} · Full school calendar`;
     }
-    return "Teacher · Full school calendar";
+    return "Regular teacher · Full school calendar";
   }
   const isHouseLeader = (state.leadershipAssignments?.houseLeaders?.[student.houseId] ?? []).includes(student.id);
   const labs = (state.leadershipAssignments?.labs ?? []).filter((lab) => lab.leaderIds.includes(student.id));
@@ -673,12 +875,14 @@ function renderSuperAdminTools() {
   if (activeUser.type !== "teacher") return "";
   if (!getActiveTeacherPermissions().canManageAccounts) return "";
   const accountNotice = lastCreatedAccount
-    ? `<div class="account-created-notice" role="status"><strong>${escapeHtml(lastCreatedAccount.name)} is ready</strong><span>Login: <code>${escapeHtml(lastCreatedAccount.username)}</code></span><span>Password: <code>${escapeHtml(lastCreatedAccount.username)}</code></span></div>`
+    ? `<div class="account-created-notice" role="status"><strong>${escapeHtml(lastCreatedAccount.name)} is ready</strong><span>Login: <code>${escapeHtml(lastCreatedAccount.username)}</code></span><span>${cloudEnabled ? "Temporary password" : "Password"}: <code>${escapeHtml(cloudEnabled ? lastCreatedAccount.temporaryPassword ?? "Provisioning required" : lastCreatedAccount.username)}</code></span></div>`
     : "";
+  const firstTeacher = (state.teachers ?? [])[0];
   return `
     <details class="calendar-admin super-admin-tools panel">
       <summary><span>Super admin tools</span><small>Accounts and House placement</small></summary>
       ${accountNotice}
+      ${cloudEnabled ? `<form data-support-form="account-reset" class="support-section"><label>Reset an account's temporary password<select name="id">${[...state.teachers, ...state.students].map(account => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.name)} · ${escapeHtml(account.username)}</option>`).join("")}</select></label><button class="secondary-button" type="submit">Generate new temporary password</button><p class="support-error" role="alert"></p></form>` : ""}
       <div class="calendar-admin-grid">
         <section>
           <h3>Transfer a student</h3>
@@ -691,7 +895,7 @@ function renderSuperAdminTools() {
         </section>
         <section>
           <h3>Create a student account</h3>
-          <p>The login and password use the student’s name without spaces.</p>
+          <p>${cloudEnabled ? "A unique temporary password is generated. The user sets their own password at first login." : "The login and password use the student’s name without spaces."}</p>
           <form id="create-student-form" class="compact-admin-form">
             <label>Full name<input name="name" required maxlength="100" /></label>
             <label>Grade<select name="grade">${Array.from({ length: 12 }, (_, index) => `<option value="${index + 1}">Grade ${index + 1}</option>`).join("")}</select></label>
@@ -701,12 +905,22 @@ function renderSuperAdminTools() {
         </section>
         <section>
           <h3>Create a teacher account</h3>
-          <p>Choose whether the teacher can publish House events or manage the whole app.</p>
+          <p>Assign one of the four staff statuses. Leader teacher is House-specific; Teacher supervising can edit every student record.</p>
           <form id="create-teacher-form" class="compact-admin-form">
             <label>Full name<input name="name" required maxlength="100" /></label>
-            <label>Role<select name="role">${TEACHER_ROLES.map((role) => `<option value="${role}">${role === "super-admin" ? "Super admin" : role === "house-leader" ? "House leader" : "Teacher"}</option>`).join("")}</select></label>
+            <label>Status<select name="role">${TEACHER_ROLES.map((role) => `<option value="${role}">${TEACHER_ROLE_LABELS[role]}</option>`).join("")}</select></label>
             <label>House<select name="houseId"><option value="">No House</option>${HOUSES.map((house) => `<option value="${house.id}">${house.name}</option>`).join("")}</select></label>
             <button class="secondary-button" type="submit">Create teacher</button>
+          </form>
+        </section>
+        <section>
+          <h3>Manage staff status</h3>
+          <p>Super admins and Teacher supervising always edit every student record. Leader teacher only controls House calendar events.</p>
+          <form id="update-teacher-status-form" class="compact-admin-form">
+            <label>Staff member<select name="teacherId" id="staff-status-teacher">${(state.teachers ?? []).map((teacher) => `<option value="${teacher.id}" data-role="${teacher.role}" data-house-id="${teacher.houseId ?? ""}">${escapeHtml(teacher.name)} · ${TEACHER_ROLE_LABELS[teacher.role]}</option>`).join("")}</select></label>
+            <label>Status<select name="role" id="staff-status-role">${TEACHER_ROLES.map((role) => `<option value="${role}" ${role === firstTeacher?.role ? "selected" : ""}>${TEACHER_ROLE_LABELS[role]}</option>`).join("")}</select></label>
+            <label>House<select name="houseId" id="staff-status-house"><option value="">No House</option>${HOUSES.map((house) => `<option value="${house.id}" ${house.id === firstTeacher?.houseId ? "selected" : ""}>${house.name}</option>`).join("")}</select></label>
+            <button class="secondary-button" type="submit">Save staff status</button>
           </form>
         </section>
       </div>
@@ -978,6 +1192,8 @@ function renderDashboard() {
           <div class="student-access-badges">${isHouseLeader ? "<span>House leader</span>" : ""}${labs.map((lab) => `<span>${escapeHtml(lab.name)} leader</span>`).join("")}</div>
         </section>
         ${renderSchoolCalendar()}
+        ${cloudEnabled ? renderSupportNotifications(state, activeUser, escapeHtml) : ""}
+        ${cloudEnabled ? renderSupportProfile(state, activeUser, activeStudent, escapeHtml, { dashboard: true }) : ""}
         ${renderSelCheckInModal()}
       </div>
     `;
@@ -991,6 +1207,7 @@ function renderDashboard() {
   return `
     <div class="page">
       ${renderPageHeader("House dashboard", "")}
+      ${cloudEnabled ? renderSupportNotifications(state, activeUser, escapeHtml) : ""}
 
       ${renderSchoolCalendar()}
 
@@ -1140,6 +1357,7 @@ function renderSendSummary(student, selectedValue, canSend) {
           <dt>Comment</dt>
           <dd class="send-comment-preview ${sendComment.trim() ? "" : "is-empty"}">${commentLabel}</dd>
         </div>
+        <div><dt>Additional editors</dt><dd>${sendEditorIds.length ? `${sendEditorIds.length} selected` : "None"}</dd></div>
       </dl>
 
       <button
@@ -1234,6 +1452,11 @@ function renderSend() {
               <span id="send-comment-count">${sendComment.length}/${MAX_COMMENT_LENGTH}</span>
             </div>
           </fieldset>
+
+          <fieldset class="concern-section editor-access-section">
+            <legend><span>5</span> Editing access</legend>
+            ${renderEditorAccessPicker({ selectedIds: sendEditorIds })}
+          </fieldset>
         </section>
 
         <aside class="send-summary-list" aria-label="Recognition summaries">
@@ -1309,6 +1532,171 @@ function renderConcernAttachment(concern, visibility) {
   if (!concern.attachmentData || concern.attachmentVisibility !== visibility) return "";
   const label = visibility === "confidential" ? "Confidential attachment" : "Supporting attachment";
   return `<a class="record-attachment" href="${escapeHtml(concern.attachmentData)}" download="${escapeHtml(concern.attachmentName || "attachment")}">${label}: ${escapeHtml(concern.attachmentName || "Download file")}</a>`;
+}
+
+function resetProfileConcernFilters() {
+  Object.keys(profileConcernFilters).forEach((type) => {
+    profileConcernFilters[type] = "all";
+  });
+}
+
+function getProfileConcernFilterOptions(type, concerns) {
+  const options = [];
+  const seen = new Set();
+  const addOption = (value, label) => {
+    if (seen.has(value)) return;
+    seen.add(value);
+    options.push({ value, label });
+  };
+
+  if (type === "behavior") {
+    const usedIssueIds = new Set(concerns.flatMap((concern) => concern.issueIds ?? []));
+    BEHAVIOR_ISSUES.filter((issue) => usedIssueIds.has(issue.id)).forEach((issue) => {
+      addOption(`issue:${issue.id}`, issue.title);
+    });
+    if (concerns.some((concern) => concern.otherIssueSelected || concern.otherIssue)) {
+      addOption("other", "Other behavior issue");
+    }
+  } else if (type === "academic") {
+    const usedIssues = new Set(concerns.flatMap((concern) => concern.issueIds ?? []));
+    const listedIssues = Object.values(ACADEMIC_CONCERN_EXAMPLES).flat();
+    listedIssues.filter((issue) => usedIssues.has(issue)).forEach((issue) => {
+      addOption(`issue:${issue}`, issue);
+    });
+    usedIssues.forEach((issue) => addOption(`issue:${issue}`, issue));
+    const usedProfileIds = new Set(concerns.map((concern) => concern.profileId).filter(Boolean));
+    ACADEMIC_PROFILES.filter((profile) => usedProfileIds.has(profile.id)).forEach((profile) => {
+      addOption(`profile:${profile.id}`, profile.name);
+    });
+    if (concerns.some((concern) => concern.otherIssue)) {
+      addOption("other", "Other academic issue");
+    }
+  } else if (type === "sel") {
+    const usedConcernIds = new Set(concerns.flatMap((concern) => concern.concernIds ?? []));
+    SEL_CONCERN_OPTIONS.filter(
+      (option) => option.id !== "other" && usedConcernIds.has(option.id)
+    ).forEach((option) => {
+      addOption(`issue:${option.id}`, option.title);
+    });
+    if (usedConcernIds.has("other") || concerns.some((concern) => concern.otherConcern)) {
+      addOption("other", "Other SEL concern");
+    }
+  }
+
+  return options;
+}
+
+function concernMatchesProfileFilter(type, concern, filter) {
+  if (filter === "all") return true;
+  if (filter === "other") {
+    if (type === "behavior") return Boolean(concern.otherIssueSelected || concern.otherIssue);
+    if (type === "academic") return Boolean(concern.otherIssue);
+    return Boolean(concern.concernIds?.includes("other") || concern.otherConcern);
+  }
+  if (filter.startsWith("profile:")) {
+    return type === "academic" && concern.profileId === filter.slice("profile:".length);
+  }
+  if (!filter.startsWith("issue:")) return false;
+  const issueId = filter.slice("issue:".length);
+  return type === "sel"
+    ? concern.concernIds?.includes(issueId)
+    : concern.issueIds?.includes(issueId);
+}
+
+function renderProfileConcernFilter(type, concerns, label) {
+  const options = getProfileConcernFilterOptions(type, concerns);
+  if (!options.some((option) => option.value === profileConcernFilters[type])) {
+    profileConcernFilters[type] = "all";
+  }
+  return `
+    <label class="profile-record-filter">
+      <span class="sr-only">Filter ${label}</span>
+      <select data-profile-concern-filter="${type}" aria-label="Filter ${label}" ${options.length ? "" : "disabled"}>
+        <option value="all">All ${label}</option>
+        ${options.map((option) => `<option value="${escapeHtml(option.value)}" ${profileConcernFilters[type] === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
+      </select>
+    </label>
+  `;
+}
+
+function getRecordEditItem() {
+  if (!recordEditTarget) return null;
+  const { type, id } = recordEditTarget;
+  if (type === "award") return state.awards.find((item) => item.id === id) ?? null;
+  const collection = {
+    behavior: state.behaviorConcerns,
+    academic: state.academicConcerns,
+    sel: state.selConcerns
+  }[type];
+  return collection?.find((item) => item.id === id) ?? null;
+}
+
+function renderRecordEditButton(type, record) {
+  if (activeUser?.type !== "teacher" || !canEditStudentRecord(state, activeTeacher.id, record)) {
+    return "";
+  }
+  const effectiveType = record.sourceType === "behavior-concern" ? "behavior" : type;
+  const effectiveId = record.sourceType === "behavior-concern" ? record.sourceConcernId : record.id;
+  return `<button class="record-edit-button" type="button" data-action="edit-student-record" data-record-type="${effectiveType}" data-record-id="${effectiveId}">Edit</button>`;
+}
+
+function renderRecordEditModal() {
+  const record = getRecordEditItem();
+  if (!record || activeUser?.type !== "teacher") return "";
+  if (!canEditStudentRecord(state, activeTeacher.id, record)) {
+    recordEditTarget = null;
+    return "";
+  }
+  const { type } = recordEditTarget;
+  const author = getTeacher(record.teacherId);
+  const typeLabel = type === "award" ? "coin" : `${type} concern`;
+  const commonConcernFields = type === "award" ? "" : `
+    <div class="form-grid two-columns">
+      <label>Record date<input name="incidentDate" type="date" value="${escapeHtml(record.incidentDate)}" required /></label>
+      ${type === "behavior" ? `<label>Incident time<input name="incidentTime" type="time" value="${escapeHtml(record.incidentTime ?? "13:15")}" required /></label>` : ""}
+    </div>
+    ${type === "behavior" ? `<label>Location<input name="location" maxlength="160" value="${escapeHtml(record.location ?? "")}" required /></label>` : ""}
+    <label>Title<input name="title" maxlength="${MAX_CONCERN_TITLE_LENGTH}" value="${escapeHtml(record.title)}" required /></label>
+    <label>Description<textarea name="description" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" required>${escapeHtml(record.description)}</textarea></label>
+    ${type === "behavior" ? `
+      <label>Additional or different step taken<textarea name="customAction" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3">${escapeHtml(record.customAction ?? "")}</textarea></label>
+      <label>Confidential teacher note<textarea name="confidentialNote" maxlength="${MAX_INTERNAL_NOTE_LENGTH}" rows="3">${escapeHtml(record.confidentialNote ?? "")}</textarea></label>
+    ` : ""}
+    ${type === "academic" ? `
+      <label>Step taken<textarea name="actionDetails" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="4" required>${escapeHtml(record.actionDetails ?? "")}</textarea></label>
+      <label>Internal note<textarea name="internalNote" maxlength="${MAX_INTERNAL_NOTE_LENGTH}" rows="3">${escapeHtml(record.internalNote ?? "")}</textarea></label>
+    ` : ""}
+    ${type === "sel" ? `
+      <label>Support or follow-up<textarea name="followUp" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="4">${escapeHtml(record.followUp ?? "")}</textarea></label>
+      <label>Confidential teacher note<textarea name="confidentialNote" maxlength="${MAX_INTERNAL_NOTE_LENGTH}" rows="3">${escapeHtml(record.confidentialNote ?? "")}</textarea></label>
+    ` : ""}
+  `;
+  const awardFields = type !== "award" ? "" : `
+    <div class="form-grid two-columns">
+      <label>HCAS 7C<select name="valueId">${VALUES.map((value) => `<option value="${value.id}" ${value.id === record.valueId ? "selected" : ""}>${value.name}</option>`).join("")}</select></label>
+      <label>Points<select name="points">${POINT_OPTIONS.map((points) => `<option value="${points}" ${points === record.points ? "selected" : ""}>${points} points</option>`).join("")}</select></label>
+    </div>
+    <label>Comment<textarea name="comment" maxlength="${MAX_COMMENT_LENGTH}" rows="4">${escapeHtml(record.comment ?? "")}</textarea></label>
+  `;
+
+  return `
+    <div class="modal-backdrop" data-action="close-record-edit">
+      <section class="modal-panel record-edit-modal" role="dialog" aria-modal="true" aria-labelledby="record-edit-title" data-modal-panel>
+        <button class="detail-close" type="button" data-action="close-record-edit" aria-label="Close editor">×</button>
+        <div class="modal-heading">
+          <span class="calendar-type-badge is-school">Staff record</span>
+          <h2 id="record-edit-title">Edit ${typeLabel}</h2>
+          <p>Published by ${escapeHtml(author?.name ?? "Unknown teacher")} on ${formatDateTime(record.publishedAt ?? record.createdAt)}.</p>
+        </div>
+        <form id="record-edit-form" data-record-type="${type}" data-record-id="${record.id}">
+          <div class="record-edit-fields">${awardFields}${commonConcernFields}</div>
+          ${renderEditorAccessPicker({ selectedIds: record.editorIds, authorId: record.teacherId })}
+          <p class="field-help">The author, students involved, original publication date, and category-specific selections stay attached to this record.</p>
+          <div class="form-submit-bar"><span>${record.updatedAt ? `Last edited ${formatDateTime(record.updatedAt)}` : "No previous edits"}</span><button class="primary-button" type="submit">Save changes</button></div>
+        </form>
+      </section>
+    </div>
+  `;
 }
 
 async function readFileAsDataUrl(file, maxBytes = 750_000, label = "The attachment") {
@@ -1527,6 +1915,11 @@ function renderBehaviorConcern() {
           <label class="full-field"><span class="sr-only">Confidential teacher note</span><textarea name="confidentialNote" maxlength="${MAX_INTERNAL_NOTE_LENGTH}" rows="4" placeholder="Internal context for teachers only"></textarea></label>
         </fieldset>
 
+        <fieldset class="concern-section editor-access-section">
+          <legend><span>9</span> Editing access</legend>
+          ${renderEditorAccessPicker()}
+        </fieldset>
+
         <div class="form-submit-bar">
           <span>Publication date and author are added automatically.</span>
           <button class="primary-button" type="submit">Publish behavior concern</button>
@@ -1622,6 +2015,11 @@ function renderAcademicConcern() {
           <label class="full-field"><span class="sr-only">Internal academic note</span><textarea name="internalNote" maxlength="${MAX_INTERNAL_NOTE_LENGTH}" rows="4" placeholder="Additional teacher-only context"></textarea></label>
         </fieldset>
 
+        <fieldset class="concern-section editor-access-section">
+          <legend><span>6</span> Editing access</legend>
+          ${renderEditorAccessPicker()}
+        </fieldset>
+
         <div class="form-submit-bar">
           <span>Publication date and author are added automatically.</span>
           <button class="primary-button" type="submit">Publish academic concern</button>
@@ -1696,6 +2094,11 @@ function renderSelConcern() {
           <label class="full-field"><span class="sr-only">Confidential SEL note</span><textarea name="confidentialNote" maxlength="${MAX_INTERNAL_NOTE_LENGTH}" rows="4" placeholder="Additional context for authenticated teachers only"></textarea></label>
         </fieldset>
 
+        <fieldset class="concern-section editor-access-section">
+          <legend><span>7</span> Editing access</legend>
+          ${renderEditorAccessPicker()}
+        </fieldset>
+
         <div class="form-submit-bar">
           <span>Publication date and author are added automatically.</span>
           <button class="primary-button" type="submit">Publish SEL concern</button>
@@ -1714,6 +2117,10 @@ function formatStudentCount(count) {
 }
 
 function renderStudents() {
+  if (activeUser?.type === "student") {
+    const student = getActiveStudent();
+    return `<div class="page">${renderPageHeader("My profile", "")}<section class="panel">${renderSupportProfile(state, activeUser, student, escapeHtml)}${renderStudentCoinTable(student)}<section class="profile-record-section"><h3>Behavior notices</h3>${state.behaviorConcerns.map(item => `<article><h4>${escapeHtml(item.title)}</h4><time>${formatDateOnly(item.incidentDate)}</time><p>${escapeHtml(item.description)}</p></article>`).join("") || '<p>No behavior notices.</p>'}</section></section></div>`;
+  }
   const filteredStudents = getFilteredStudents();
 
   return `
@@ -1760,7 +2167,7 @@ function renderStudentGallery() {
       const namePathId = `${student.id}-name-curve`;
       const gradePathId = `${student.id}-grade-curve`;
       return `
-        <button
+        <div class="student-crest-item"><button
           class="student-crest ${student.id === profileStudentId ? "is-selected" : ""}"
           type="button"
           data-action="select-student"
@@ -1784,7 +2191,7 @@ function renderStudentGallery() {
             </svg>
             <b class="student-points-badge">${totalPoints}</b>
           </span>
-        </button>
+        </button>${renderIepHeart(state, activeUser, student, escapeHtml)}</div>
       `;
     })
     .join("");
@@ -1798,6 +2205,7 @@ function renderStudentDetailRegion() {
   if (!profileStudentId || !isStudentVisible) {
     profileStudentId = null;
     expandedStudentValueId = null;
+    resetProfileConcernFilters();
     return "";
   }
 
@@ -1850,7 +2258,7 @@ function renderStudentCoinTable(student) {
       </div>
       <div class="responsive-table">
         <table class="record-table">
-          <thead><tr><th scope="col">Published</th><th scope="col">HCAS 7C</th><th scope="col">Teacher</th><th scope="col">Points</th><th scope="col">Comment</th></tr></thead>
+          <thead><tr><th scope="col">Published</th><th scope="col">HCAS 7C</th><th scope="col">Teacher</th><th scope="col">Points</th><th scope="col">Comment</th><th scope="col">Access</th></tr></thead>
           <tbody>
             ${awards.length
               ? awards
@@ -1864,11 +2272,12 @@ function renderStudentCoinTable(student) {
                         <td>${teacher.name}</td>
                         <td><b class="points-notification ${award.points < 0 ? "is-negative" : ""}">${formatSignedPoints(award.points)}</b></td>
                         <td>${award.comment ? escapeHtml(award.comment) : '<span class="muted-cell">No comment</span>'}</td>
+                        <td>${renderRecordEditButton("award", award)}${renderRecordAccessSummary(award)}</td>
                       </tr>
                     `;
                   })
                   .join("")
-              : '<tr><td colspan="5" class="empty-table-cell">No coins have been published for this student.</td></tr>'}
+              : '<tr><td colspan="6" class="empty-table-cell">No coins have been published for this student.</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -1877,16 +2286,25 @@ function renderStudentCoinTable(student) {
 }
 
 function renderBehaviorConcernsTable(student) {
-  const concerns = getStudentBehaviorConcerns(state, student.id);
+  const allConcerns = getStudentBehaviorConcerns(state, student.id);
+  const concerns = allConcerns.filter((concern) =>
+    concernMatchesProfileFilter("behavior", concern, profileConcernFilters.behavior)
+  );
+  const countLabel = profileConcernFilters.behavior === "all"
+    ? `${allConcerns.length} notices`
+    : `${concerns.length} of ${allConcerns.length} notices`;
   return `
     <section class="profile-record-section" aria-labelledby="${student.id}-behavior-history">
       <div class="record-section-heading">
-        <div><h3 id="${student.id}-behavior-history">Behavior concerns</h3><span>${concerns.length} notices</span></div>
-        <span class="privacy-badge">Teacher details</span>
+        <div><h3 id="${student.id}-behavior-history">Behavior concerns</h3><span>${countLabel}</span></div>
+        <div class="record-heading-tools">
+          ${renderProfileConcernFilter("behavior", allConcerns, "behavior issues")}
+          <span class="privacy-badge">Teacher details</span>
+        </div>
       </div>
       <div class="responsive-table">
         <table class="record-table concern-history-table">
-          <thead><tr><th scope="col">Incident</th><th scope="col">Concern</th><th scope="col">Published</th><th scope="col">Author</th></tr></thead>
+          <thead><tr><th scope="col">Incident</th><th scope="col">Concern</th><th scope="col">Published</th><th scope="col">Author</th><th scope="col">Access</th></tr></thead>
           <tbody>
             ${concerns.length
               ? concerns
@@ -1916,16 +2334,18 @@ function renderBehaviorConcernsTable(student) {
                               ${renderConcernAttachment(concern, "record")}
                               ${linkedStudents.length ? `<h4>Other students involved, teacher-only</h4><div class="linked-students">${linkedStudents.map((linkedStudent) => renderStudentIdentity(linkedStudent, { secondary: `Grade ${linkedStudent.grade}`, points: getStudentTotal(state, linkedStudent.id), action: true, className: "is-compact" })).join("")}</div>` : ""}
                               ${concern.confidentialNote || concern.attachmentVisibility === "confidential" ? `<div class="confidential-note"><strong>Confidential teacher section</strong>${concern.confidentialNote ? `<p>${escapeHtml(concern.confidentialNote)}</p>` : ""}${renderConcernAttachment(concern, "confidential")}</div>` : ""}
+                              ${renderRecordAccessSummary(concern)}
                             </div>
                           </details>
                         </td>
                         <td><time datetime="${concern.publishedAt}">${formatDateTime(concern.publishedAt)}</time></td>
                         <td>${author.name}</td>
+                        <td>${renderRecordEditButton("behavior", concern)}</td>
                       </tr>
                     `;
                   })
                   .join("")
-              : '<tr><td colspan="4" class="empty-table-cell">No behavior concerns have been published.</td></tr>'}
+              : `<tr><td colspan="5" class="empty-table-cell">${allConcerns.length ? "No behavior concerns match this filter." : "No behavior concerns have been published."}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1934,16 +2354,25 @@ function renderBehaviorConcernsTable(student) {
 }
 
 function renderAcademicConcernsTable(student) {
-  const concerns = getStudentAcademicConcerns(state, student.id);
+  const allConcerns = getStudentAcademicConcerns(state, student.id);
+  const concerns = allConcerns.filter((concern) =>
+    concernMatchesProfileFilter("academic", concern, profileConcernFilters.academic)
+  );
+  const countLabel = profileConcernFilters.academic === "all"
+    ? `${allConcerns.length} teacher-only records`
+    : `${concerns.length} of ${allConcerns.length} teacher-only records`;
   return `
     <section class="profile-record-section teacher-only-records" aria-labelledby="${student.id}-academic-history">
       <div class="record-section-heading">
-        <div><h3 id="${student.id}-academic-history">Academic concerns</h3><span>${concerns.length} teacher-only records</span></div>
-        <span class="privacy-badge is-private">Teachers only</span>
+        <div><h3 id="${student.id}-academic-history">Academic concerns</h3><span>${countLabel}</span></div>
+        <div class="record-heading-tools">
+          ${renderProfileConcernFilter("academic", allConcerns, "academic concerns")}
+          <span class="privacy-badge is-private">Teachers only</span>
+        </div>
       </div>
       <div class="responsive-table">
         <table class="record-table concern-history-table">
-          <thead><tr><th scope="col">Concern date</th><th scope="col">Academic record</th><th scope="col">Published</th><th scope="col">Author</th></tr></thead>
+          <thead><tr><th scope="col">Concern date</th><th scope="col">Academic record</th><th scope="col">Published</th><th scope="col">Author</th><th scope="col">Access</th></tr></thead>
           <tbody>
             ${concerns.length
               ? concerns
@@ -1967,16 +2396,18 @@ function renderAcademicConcernsTable(student) {
                               ${renderConcernAttachment(concern, "record")}
                               ${linkedStudents.length ? `<h4>Other students involved, teacher-only</h4><div class="linked-students">${linkedStudents.map((linkedStudent) => renderStudentIdentity(linkedStudent, { secondary: `Grade ${linkedStudent.grade}`, points: getStudentTotal(state, linkedStudent.id), action: true, className: "is-compact" })).join("")}</div>` : ""}
                               ${concern.internalNote || concern.attachmentVisibility === "confidential" ? `<div class="confidential-note"><strong>Internal teacher section</strong>${concern.internalNote ? `<p>${escapeHtml(concern.internalNote)}</p>` : ""}${renderConcernAttachment(concern, "confidential")}</div>` : ""}
+                              ${renderRecordAccessSummary(concern)}
                             </div>
                           </details>
                         </td>
                         <td><time datetime="${concern.publishedAt}">${formatDateTime(concern.publishedAt)}</time></td>
                         <td>${author.name}</td>
+                        <td>${renderRecordEditButton("academic", concern)}</td>
                       </tr>
                     `;
                   })
                   .join("")
-              : '<tr><td colspan="4" class="empty-table-cell">No academic concerns have been published.</td></tr>'}
+              : `<tr><td colspan="5" class="empty-table-cell">${allConcerns.length ? "No academic concerns match this filter." : "No academic concerns have been published."}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1985,16 +2416,25 @@ function renderAcademicConcernsTable(student) {
 }
 
 function renderSelConcernsTable(student) {
-  const concerns = getStudentSelConcerns(state, student.id);
+  const allConcerns = getStudentSelConcerns(state, student.id);
+  const concerns = allConcerns.filter((concern) =>
+    concernMatchesProfileFilter("sel", concern, profileConcernFilters.sel)
+  );
+  const countLabel = profileConcernFilters.sel === "all"
+    ? `${allConcerns.length} teacher-only records`
+    : `${concerns.length} of ${allConcerns.length} teacher-only records`;
   return `
     <section class="profile-record-section teacher-only-records" aria-labelledby="${student.id}-sel-history">
       <div class="record-section-heading">
-        <div><h3 id="${student.id}-sel-history">SEL concerns</h3><span>${concerns.length} teacher-only records</span></div>
-        <span class="privacy-badge is-private">Teachers only</span>
+        <div><h3 id="${student.id}-sel-history">SEL concerns</h3><span>${countLabel}</span></div>
+        <div class="record-heading-tools">
+          ${renderProfileConcernFilter("sel", allConcerns, "SEL concerns")}
+          <span class="privacy-badge is-private">Teachers only</span>
+        </div>
       </div>
       <div class="responsive-table">
         <table class="record-table concern-history-table">
-          <thead><tr><th scope="col">Observed</th><th scope="col">SEL record</th><th scope="col">Published</th><th scope="col">Author</th></tr></thead>
+          <thead><tr><th scope="col">Observed</th><th scope="col">SEL record</th><th scope="col">Published</th><th scope="col">Author</th><th scope="col">Access</th></tr></thead>
           <tbody>
             ${concerns.length ? concerns.map((concern) => {
               const author = getTeacher(concern.teacherId);
@@ -2016,13 +2456,15 @@ function renderSelConcernsTable(student) {
                         ${renderConcernAttachment(concern, "record")}
                         ${linkedStudents.length ? `<h4>Other students involved, teacher-only</h4><div class="linked-students">${linkedStudents.map((linkedStudent) => renderStudentIdentity(linkedStudent, { secondary: `Grade ${linkedStudent.grade}`, points: getStudentTotal(state, linkedStudent.id), action: true, className: "is-compact" })).join("")}</div>` : ""}
                         ${concern.confidentialNote || concern.attachmentVisibility === "confidential" ? `<div class="confidential-note"><strong>Confidential teacher section</strong>${concern.confidentialNote ? `<p>${escapeHtml(concern.confidentialNote)}</p>` : ""}${renderConcernAttachment(concern, "confidential")}</div>` : ""}
+                        ${renderRecordAccessSummary(concern)}
                       </div>
                     </details>
                   </td>
                   <td><time datetime="${concern.publishedAt}">${formatDateTime(concern.publishedAt)}</time></td>
                   <td>${escapeHtml(author?.name ?? "Unknown teacher")}</td>
+                  <td>${renderRecordEditButton("sel", concern)}</td>
                 </tr>`;
-            }).join("") : '<tr><td colspan="4" class="empty-table-cell">No SEL concerns have been published.</td></tr>'}
+            }).join("") : `<tr><td colspan="5" class="empty-table-cell">${allConcerns.length ? "No SEL concerns match this filter." : "No SEL concerns have been published."}</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -2101,6 +2543,7 @@ function renderStudentDetail() {
     </div>
 
     ${renderStudentCoinTable(student)}
+    ${cloudEnabled ? renderSupportProfile(state, activeUser, student, escapeHtml) : ""}
     ${renderBehaviorConcernsTable(student)}
     ${renderAcademicConcernsTable(student)}
     ${renderSelConcernsTable(student)}
@@ -2230,6 +2673,7 @@ function renderTeacherActivity() {
                       ${renderRecognitionComment(award.comment)}
                     </div>
                     <time class="recognition-time" datetime="${award.createdAt}">Published ${formatDateTime(award.createdAt)}</time>
+                    ${renderRecordEditButton("award", award)}
                     <button
                       class="unsend-button"
                       type="button"
@@ -2351,7 +2795,7 @@ function render() {
     return;
   }
 
-  if (activeUser.type === "student" && activeView !== "dashboard") {
+  if (activeUser.type === "student" && !["dashboard", "students"].includes(activeView)) {
     activeView = "dashboard";
     window.history.replaceState(null, "", "#dashboard");
   }
@@ -2372,12 +2816,23 @@ function render() {
   });
 
   document.querySelectorAll("[data-view]").forEach((button) => {
+    if (button.dataset.view === "students") {
+      const label = button.querySelector("span");
+      if (label) label.textContent = activeUser.type === "student" ? "My profile" : "Students";
+      else for (const node of button.childNodes) {
+        if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) node.textContent = activeUser.type === "student" ? " My profile" : " Students";
+      }
+    }
     const isActive = button.dataset.view === activeView;
     button.classList.toggle("is-active", isActive);
     if (isActive) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   });
 
+  if (mustChangePassword) {
+    viewRoot.innerHTML = `<section class="panel support-section password-setup"><h1>Set your school password</h1><p>Replace your temporary password before opening student records.</p><form data-support-form="password"><label>New password (at least 14 characters)<input name="password" type="password" minlength="14" maxlength="128" autocomplete="new-password" required /></label><label>Confirm password<input name="confirmation" type="password" autocomplete="new-password" required /></label><button class="primary-button" type="submit">Save password</button><p class="support-error" role="alert"></p></form></section>`;
+    return;
+  }
   if (activeView === "send") viewRoot.innerHTML = renderSend();
   else if (activeView === "behavior-concern") viewRoot.innerHTML = renderBehaviorConcern();
   else if (activeView === "academic-concern") viewRoot.innerHTML = renderAcademicConcern();
@@ -2387,16 +2842,27 @@ function render() {
   else if (activeView === "activity") viewRoot.innerHTML = renderTeacherActivity();
   else viewRoot.innerHTML = renderDashboard();
 
+  viewRoot.insertAdjacentHTML("beforeend", renderRecordEditModal());
+  if (cloudEnabled && ["behavior-concern", "academic-concern", "sel-concern"].includes(activeView)) {
+    viewRoot.querySelector(".form-submit-bar")?.insertAdjacentHTML("beforebegin", '<label class="checkbox-label plan-request-toggle"><input type="checkbox" name="requestSmartGoal" /> Notify supervising staff: a SMART support plan may help this student</label>');
+  }
+
   window.requestAnimationFrame(() => {
     if (activeView === "behavior-concern") updateBehaviorCodePreview();
     if (activeView === "academic-concern") updateAcademicFormOptions();
   });
 }
 
-loginForm.addEventListener("submit", (event) => {
+loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const formData = new FormData(loginForm);
-  const user = authenticateUser(formData.get("username"), formData.get("password"), state);
+  let user;
+  try {
+    if (cloudEnabled) {
+      applyCloudResult(await cloudLogin(formData.get("username"), formData.get("password")));
+      user = activeUser;
+    } else user = authenticateUser(formData.get("username"), formData.get("password"), state);
+  } catch (error) { loginError.textContent = error.message; return; }
 
   if (!user) {
     loginError.textContent = "Incorrect username or password.";
@@ -2416,7 +2882,11 @@ loginForm.addEventListener("submit", (event) => {
   showToast(`Logged in as ${user.name}.`);
 });
 
-document.addEventListener("click", (event) => {
+document.addEventListener("click", async (event) => {
+  try {
+  if (cloudBusy) return;
+  const supportButton = event.target.closest("[data-action]");
+  if (supportButton && await handleSupportClick(supportButton)) return;
   const viewButton = event.target.closest("[data-view]");
   if (viewButton) {
     if (viewButton.dataset.view === "send" && activeView !== "send") {
@@ -2480,7 +2950,7 @@ document.addEventListener("click", (event) => {
         showToast("Only a super admin can change leader access.");
         break;
       }
-      commitState(
+      await commitState(
         setHouseLeader(state, actionTarget.dataset.houseId, actionTarget.dataset.studentId, false),
         "House leader access removed."
       );
@@ -2490,9 +2960,10 @@ document.addEventListener("click", (event) => {
         showToast("Only a super admin can change lab access.");
         break;
       }
-      commitState(removeLabAssignment(state, actionTarget.dataset.labId), "Lab leader access removed.");
+      await commitState(removeLabAssignment(state, actionTarget.dataset.labId), "Lab leader access removed.");
       break;
     case "logout":
+      if (cloudEnabled) { await cloudLogout(); state = createInitialState(); cloudSnapshot = null; }
       sessionStorage.removeItem(SESSION_KEY);
       sessionStorage.removeItem(LEGACY_SESSION_KEY);
       activeUser = null;
@@ -2500,6 +2971,7 @@ document.addEventListener("click", (event) => {
       activeView = "dashboard";
       resetSendSelection();
       expandedStudentValueId = null;
+      resetProfileConcernFilters();
       expandedTeacherValueId = null;
       concernStudentPreset = null;
       lastConcernConfirmation = null;
@@ -2586,9 +3058,10 @@ document.addEventListener("click", (event) => {
         activeTeacher.id,
         pointsSent,
         Date.now(),
-        comment
+        comment,
+        sendEditorIds
       );
-      saveState();
+      await saveState();
       const publishedAt = state.awards.at(-1).createdAt;
       lastConfirmation = {
         studentId,
@@ -2603,6 +3076,7 @@ document.addEventListener("click", (event) => {
         selectedValueId = null;
         selectedPoints = null;
         sendComment = "";
+        sendEditorIds = [];
       }
 
       render();
@@ -2619,6 +3093,7 @@ document.addEventListener("click", (event) => {
     case "select-student":
       if (profileStudentId !== actionTarget.dataset.studentId) {
         expandedStudentValueId = null;
+        resetProfileConcernFilters();
       }
       profileStudentId = actionTarget.dataset.studentId;
       if (activeView !== "students") {
@@ -2658,6 +3133,7 @@ document.addEventListener("click", (event) => {
     case "close-student-detail":
       profileStudentId = null;
       expandedStudentValueId = null;
+      resetProfileConcernFilters();
       refreshStudentBrowser();
       break;
     case "filter-house":
@@ -2672,18 +3148,30 @@ document.addEventListener("click", (event) => {
     case "unsend-points": {
       const awardId = actionTarget.dataset.awardId;
       const award = state.awards.find((item) => item.id === awardId);
-      if (!award || award.teacherId !== activeTeacher.id) break;
+      if (!award || !canEditStudentRecord(state, activeTeacher.id, award)) break;
       const student = getStudent(award.studentId);
       const shouldUnsend = window.confirm(
         `Unsend ${award.points} points from ${student.name}? Student and house totals will update immediately.`
       );
       if (!shouldUnsend) break;
       state = removeAward(state, awardId, activeTeacher.id);
-      saveState();
+      await saveState();
       render();
       showToast(`${award.points} points unsent from ${student.name}.`);
       break;
     }
+    case "edit-student-record": {
+      const type = actionTarget.dataset.recordType;
+      const id = actionTarget.dataset.recordId;
+      recordEditTarget = { type, id };
+      render();
+      window.requestAnimationFrame(() => document.querySelector(".record-edit-modal")?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+      break;
+    }
+    case "close-record-edit":
+      recordEditTarget = null;
+      render();
+      break;
     case "send-to-student":
       resetSendSelection();
       sendStudentIds = [actionTarget.dataset.studentId];
@@ -2711,6 +3199,7 @@ document.addEventListener("click", (event) => {
       setView("sel-concern");
       break;
   }
+  } catch (error) { showToast(error.message); render(); }
 });
 
 viewRoot.addEventListener("change", (event) => {
@@ -2726,6 +3215,12 @@ viewRoot.addEventListener("change", (event) => {
         .map((student) => `<option value="${student.id}">${escapeHtml(student.name)} · G${student.grade}</option>`)
         .join("");
     }
+  } else if (event.target.matches("#staff-status-teacher")) {
+    const option = event.target.selectedOptions[0];
+    const roleSelect = document.querySelector("#staff-status-role");
+    const houseSelect = document.querySelector("#staff-status-house");
+    if (roleSelect) roleSelect.value = option?.dataset.role ?? "teacher";
+    if (houseSelect) houseSelect.value = option?.dataset.houseId ?? "";
   } else if (event.target.matches("#ranking-value-filter")) {
     rankingValueFilter = event.target.value;
     render();
@@ -2740,6 +3235,21 @@ viewRoot.addEventListener("change", (event) => {
     rankingDateTo = event.target.value;
     if (rankingDateFrom && rankingDateTo < rankingDateFrom) rankingDateFrom = rankingDateTo;
     render();
+  } else if (event.target.matches("[data-profile-concern-filter]")) {
+    const type = event.target.dataset.profileConcernFilter;
+    if (!(type in profileConcernFilters)) return;
+    profileConcernFilters[type] = event.target.value;
+    refreshStudentBrowser();
+    window.requestAnimationFrame(() => {
+      document.querySelector(`[data-profile-concern-filter="${type}"]`)?.focus({ preventScroll: true });
+    });
+  } else if (event.target.matches('#award-form [name="editorIds"]')) {
+    sendEditorIds = [...document.querySelectorAll('#award-form [name="editorIds"]:checked')].map(
+      (input) => input.value
+    );
+    document.querySelectorAll(".send-summary dl > div:last-child dd").forEach((label) => {
+      label.textContent = sendEditorIds.length ? `${sendEditorIds.length} selected` : "None";
+    });
   } else if (event.target.matches("#behavior-tier")) {
     const issueContainer = document.querySelector("#behavior-tier-issues");
     if (issueContainer) issueContainer.innerHTML = renderBehaviorIssueOptions(event.target.value);
@@ -2783,12 +3293,53 @@ viewRoot.addEventListener("input", (event) => {
 });
 
 viewRoot.addEventListener("submit", async (event) => {
+  if (event.target.matches("[data-support-form]")) {
+    event.preventDefault();
+    await handleSupportSubmit(event.target);
+    return;
+  }
+  if (cloudBusy) { event.preventDefault(); return; }
+  if (event.target.matches("#record-edit-form")) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    const type = event.target.dataset.recordType;
+    const recordId = event.target.dataset.recordId;
+    try {
+      const editorIds = formData.getAll("editorIds");
+      const nextState = type === "award"
+        ? updateAward(state, recordId, activeTeacher.id, {
+            valueId: formData.get("valueId"),
+            points: formData.get("points"),
+            comment: formData.get("comment"),
+            editorIds
+          })
+        : updateConcern(state, type, recordId, activeTeacher.id, {
+            incidentDate: formData.get("incidentDate"),
+            incidentTime: formData.get("incidentTime"),
+            location: formData.get("location"),
+            title: formData.get("title"),
+            description: formData.get("description"),
+            customAction: formData.get("customAction"),
+            confidentialNote: formData.get("confidentialNote"),
+            actionDetails: formData.get("actionDetails"),
+            internalNote: formData.get("internalNote"),
+            followUp: formData.get("followUp"),
+            editorIds
+          });
+      recordEditTarget = null;
+      await commitState(nextState, `${type === "award" ? "Coin" : "Concern"} updated.`);
+    } catch (error) {
+      showToast(error.message);
+    }
+    return;
+  }
+
   if (event.target.matches("#transfer-student-form")) {
     event.preventDefault();
     const formData = new FormData(event.target);
     try {
       lastCreatedAccount = null;
-      commitState(
+      await commitState(
         transferStudentHouse(
           state,
           activeUser,
@@ -2813,7 +3364,7 @@ viewRoot.addEventListener("submit", async (event) => {
         houseId: formData.get("houseId")
       });
       lastCreatedAccount = nextState.students.at(-1);
-      commitState(nextState, "Student account created.");
+      await commitState(nextState, "Student account created.");
     } catch (error) {
       showToast(error.message);
     }
@@ -2830,7 +3381,24 @@ viewRoot.addEventListener("submit", async (event) => {
         houseId: formData.get("houseId")
       });
       lastCreatedAccount = nextState.teachers.at(-1);
-      commitState(nextState, "Teacher account created.");
+      await commitState(nextState, "Teacher account created.");
+    } catch (error) {
+      showToast(error.message);
+    }
+    return;
+  }
+
+  if (event.target.matches("#update-teacher-status-form")) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    try {
+      const teacherId = formData.get("teacherId");
+      const nextState = updateTeacherAccountStatus(state, activeUser, teacherId, {
+        role: formData.get("role"),
+        houseId: formData.get("houseId")
+      });
+      const teacher = nextState.teachers.find((item) => item.id === teacherId);
+      await commitState(nextState, `${teacher.name} is now ${TEACHER_ROLE_LABELS[teacher.role]}.`);
     } catch (error) {
       showToast(error.message);
     }
@@ -2845,7 +3413,7 @@ viewRoot.addEventListener("submit", async (event) => {
     }
     const formData = new FormData(event.target);
     try {
-      commitState(
+      await commitState(
         setHouseLeader(state, formData.get("houseId"), formData.get("studentId"), true),
         "House leader access assigned."
       );
@@ -2872,7 +3440,7 @@ viewRoot.addEventListener("submit", async (event) => {
         teacherIds: formData.get("teacherId") ? [formData.get("teacherId")] : [],
         grades: leader ? [leader.grade] : []
       });
-      commitState(nextState, "Lab leader access created.");
+      await commitState(nextState, "Lab leader access created.");
     } catch (error) {
       showToast(error.message);
     }
@@ -2902,7 +3470,7 @@ viewRoot.addEventListener("submit", async (event) => {
       const nextState = addCustomCalendarEvent(state, activeUser, eventPayload);
       calendarWeekStart = startOfCalendarWeek(formData.get("date"));
       calendarCreateOpen = false;
-      commitState(nextState, "Calendar event published.");
+      await commitState(nextState, "Calendar event published.");
     } catch (error) {
       showToast(error.message);
     }
@@ -2932,7 +3500,7 @@ viewRoot.addEventListener("submit", async (event) => {
         attachmentData,
         attachmentName
       });
-      commitState(nextState, "Event details saved.");
+      await commitState(nextState, "Event details saved.");
     } catch (error) {
       showToast(error.message);
     }
@@ -2968,12 +3536,13 @@ viewRoot.addEventListener("submit", async (event) => {
         deductionValueId: formData.get("deductionValueId"),
         deductionPoints: formData.get("deductionPoints"),
         confidentialNote: formData.get("confidentialNote"),
+        editorIds: formData.getAll("editorIds"),
         teacherId: activeTeacher.id,
         incidentDate: formData.get("incidentDate"),
         ...attachment
       });
       const concern = state.behaviorConcerns.at(-1);
-      saveState();
+      await saveState();
       lastConcernConfirmation = {
         type: "Behavior concern",
         studentIds: concern.studentIds,
@@ -3005,12 +3574,13 @@ viewRoot.addEventListener("submit", async (event) => {
         otherStrategy: formData.get("otherStrategy"),
         actionDetails: formData.get("actionDetails"),
         internalNote: formData.get("internalNote"),
+        editorIds: formData.getAll("editorIds"),
         teacherId: activeTeacher.id,
         incidentDate: formData.get("incidentDate"),
         ...attachment
       });
       const concern = state.academicConcerns.at(-1);
-      saveState();
+      await saveState();
       lastConcernConfirmation = {
         type: "Academic concern",
         studentIds: concern.studentIds,
@@ -3038,12 +3608,13 @@ viewRoot.addEventListener("submit", async (event) => {
         description: formData.get("description"),
         followUp: formData.get("followUp"),
         confidentialNote: formData.get("confidentialNote"),
+        editorIds: formData.getAll("editorIds"),
         teacherId: activeTeacher.id,
         incidentDate: formData.get("incidentDate"),
         ...attachment
       });
       const concern = state.selConcerns.at(-1);
-      saveState();
+      await saveState();
       lastConcernConfirmation = {
         type: "SEL concern",
         studentIds: concern.studentIds,
@@ -3066,7 +3637,7 @@ viewRoot.addEventListener("submit", async (event) => {
         rating: formData.get("rating"),
         reflection: formData.get("reflection")
       });
-      saveState();
+      await saveState();
       selCheckInOpen = false;
       render();
       showToast("Today’s check-in is saved.");
@@ -3088,7 +3659,30 @@ window.addEventListener("hashchange", () => {
 
 render();
 
-const isPrivateVercelDeployment = window.location.hostname.endsWith(".vercel.app");
+window.addEventListener("school-session-expired", () => {
+  activeUser = null;
+  activeTeacher = null;
+  cloudSnapshot = null;
+  state = createInitialState();
+  document.querySelector("#iep-reader")?.close();
+  render();
+  loginError.textContent = "Your session ended. Please log in again.";
+});
+
+if (cloudEnabled && hasCloudSession()) {
+  cloudCall("load").then(result => { applyCloudResult(result); render(); }).catch(error => { loginError.textContent = error.message; });
+}
+if (cloudEnabled) {
+  setInterval(async () => {
+    if (!activeUser || cloudBusy || mustChangePassword || document.querySelector("dialog[open]") || document.activeElement?.matches("input, textarea, select")) return;
+    try {
+      const result = await cloudCall("load");
+      if (JSON.stringify(result.state) !== JSON.stringify(cloudSnapshot)) { applyCloudResult(result); render(); }
+    } catch { /* Preserve the current view during temporary network failures. */ }
+  }, 30_000);
+}
+
+const isPrivateVercelDeployment = cloudEnabled;
 
 if ("serviceWorker" in navigator && window.isSecureContext && !isPrivateVercelDeployment) {
   window.addEventListener("load", () => {

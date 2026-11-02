@@ -10,6 +10,7 @@ import {
   POINT_OPTIONS,
   STUDENTS,
   TEACHERS,
+  TEACHER_ROLES,
   VALUES,
   addAcademicConcern,
   addLabAssignment,
@@ -21,6 +22,7 @@ import {
   authenticateTeacher,
   authenticateUser,
   canEditCalendarEvent,
+  canEditStudentRecord,
   canCreateCalendarEvent,
   createInitialState,
   createStudentAccount,
@@ -43,7 +45,10 @@ import {
   removeAward,
   setHouseLeader,
   transferStudentHouse,
-  updateCalendarEventDetails
+  updateAward,
+  updateCalendarEventDetails,
+  updateConcern,
+  updateTeacherAccountStatus
 } from "../data.js";
 
 test("only the two configured teacher credentials authenticate", () => {
@@ -252,8 +257,13 @@ test("invalid students, 7Cs, teachers, and point amounts cannot receive an award
   assert.equal(DEFAULT_POINTS, 10);
 });
 
-test("a teacher can unsend only their own recognition and all totals recalculate", () => {
-  const state = createInitialState(new Date("2026-08-19T12:00:00Z").getTime());
+test("authorized staff can unsend a recognition and all totals recalculate", () => {
+  const initial = createInitialState(new Date("2026-08-19T12:00:00Z").getTime());
+  const superAdmin = { type: "teacher", ...TEACHERS.find((teacher) => teacher.role === "super-admin") };
+  const state = createTeacherAccount(initial, superAdmin, {
+    name: "Regular Colleague",
+    role: "teacher"
+  });
   const withAward = addAward(
     state,
     "random2",
@@ -264,11 +274,10 @@ test("a teacher can unsend only their own recognition and all totals recalculate
   );
   const award = getTeacherAwards(withAward, "david")[0];
 
-  assert.throws(
-    () => removeAward(withAward, award.id, "francois"),
-    /only unsend their own/
-  );
+  assert.throws(() => removeAward(withAward, award.id, state.teachers.at(-1).id), /permission/);
   assert.throws(() => removeAward(withAward, "missing", "david"), /Unknown recognition/);
+
+  assert.equal(removeAward(withAward, award.id, "francois").awards.includes(award), false);
 
   const restoredState = removeAward(withAward, award.id, "david");
   assert.deepEqual(getHouseTotals(restoredState), getHouseTotals(state));
@@ -285,16 +294,40 @@ test("version 2 activity migrates without losing awards", () => {
   };
 
   const migratedState = migrateStoredState(legacyState);
-  assert.equal(migratedState.version, 7);
+  assert.equal(migratedState.version, 9);
   assert.equal(migratedState.students.length, 11);
   assert.equal(migratedState.students[0].grade, 9);
-  assert.deepEqual(migratedState.awards, legacyState.awards);
+  assert.deepEqual(
+    migratedState.awards,
+    legacyState.awards.map((award) => ({ ...award, editorIds: [] }))
+  );
   assert.deepEqual(migratedState.behaviorConcerns, []);
   assert.deepEqual(migratedState.academicConcerns, []);
   assert.deepEqual(migratedState.selConcerns, []);
   assert.deepEqual(migratedState.selCheckIns, []);
   assert.deepEqual(migratedState.customCalendarEvents, []);
   assert.equal(migratedState.teachers.length, TEACHERS.length);
+});
+
+test("version 8 roster affiliations migrate to regular staff status", () => {
+  const currentState = createInitialState();
+  const regularTeacher = currentState.teachers.find((teacher) => teacher.role === "teacher");
+  const legacyState = {
+    ...currentState,
+    version: 8,
+    teachers: currentState.teachers.map((teacher) =>
+      teacher.id === regularTeacher.id
+        ? { ...teacher, role: "house-leader", houseId: "red-phoenix" }
+        : teacher
+    )
+  };
+
+  const migratedState = migrateStoredState(legacyState);
+  assert.equal(migratedState.version, 9);
+  assert.equal(
+    migratedState.teachers.find((teacher) => teacher.id === regularTeacher.id).role,
+    "teacher"
+  );
 });
 
 test("super admins manage accounts and House placement while regular teachers cannot", () => {
@@ -324,6 +357,102 @@ test("super admins manage accounts and House placement while regular teachers ca
     houseId: "green-dragons"
   });
   assert.equal(nextState.teachers.at(-1).username, "HouseLeader");
+
+  const houseLeader = nextState.teachers.at(-1);
+  nextState = updateTeacherAccountStatus(nextState, superAdmin, houseLeader.id, {
+    role: "teacher-supervising",
+    houseId: "green-dragons"
+  });
+  assert.equal(nextState.teachers.at(-1).role, "teacher-supervising");
+  assert.equal(getTeacherPermissions(nextState.teachers.at(-1)).canEditAllStudentRecords, true);
+  assert.throws(
+    () => updateTeacherAccountStatus(nextState, regularTeacher, houseLeader.id, { role: "teacher" }),
+    /super admin/
+  );
+  assert.throws(
+    () => updateTeacherAccountStatus(nextState, superAdmin, houseLeader.id, {
+      role: "house-leader",
+      houseId: null
+    }),
+    /assigned to a house/
+  );
+  assert.throws(
+    () => updateTeacherAccountStatus(nextState, superAdmin, superAdmin.id, {
+      role: "teacher",
+      houseId: superAdmin.houseId
+    }),
+    /At least one super admin/
+  );
+});
+
+test("staff statuses enforce permanent and delegated record editing access", () => {
+  assert.deepEqual(TEACHER_ROLES, [
+    "teacher",
+    "house-leader",
+    "teacher-supervising",
+    "super-admin"
+  ]);
+  assert.equal(TEACHERS.some((teacher) => teacher.role === "teacher-supervising"), false);
+  const superAdmin = { type: "teacher", ...TEACHERS.find((teacher) => teacher.role === "super-admin") };
+  let state = createInitialState();
+  state = createTeacherAccount(state, superAdmin, { name: "Supervising Teacher", role: "teacher-supervising" });
+  const supervising = state.teachers.at(-1);
+  state = createTeacherAccount(state, superAdmin, { name: "Regular Editor", role: "teacher" });
+  const delegated = state.teachers.at(-1);
+  state = createTeacherAccount(state, superAdmin, {
+    name: "Red Leader",
+    role: "house-leader",
+    houseId: "red-phoenix"
+  });
+  const leader = state.teachers.at(-1);
+
+  state = addAward(state, "random1", "community", "david", 20, Date.now(), "Helpful", [
+    delegated.id,
+    supervising.id,
+    superAdmin.id
+  ]);
+  const award = state.awards.at(-1);
+  assert.deepEqual(award.editorIds, [delegated.id]);
+  assert.equal(canEditStudentRecord(state, "david", award), true);
+  assert.equal(canEditStudentRecord(state, superAdmin.id, award), true);
+  assert.equal(canEditStudentRecord(state, supervising.id, award), true);
+  assert.equal(canEditStudentRecord(state, delegated.id, award), true);
+  assert.equal(canEditStudentRecord(state, leader.id, award), false);
+  assert.equal(getTeacherPermissions(supervising).canEditAllStudentRecords, true);
+  assert.equal(getTeacherPermissions(supervising).canManageAccounts, false);
+  assert.equal(getTeacherPermissions(supervising).canCreateCalendarEvents, false);
+  assert.equal(getTeacherPermissions(leader).canEditAllStudentRecords, false);
+
+  state = updateAward(state, award.id, supervising.id, {
+    valueId: "compassion",
+    points: 30,
+    comment: "Updated by supervising staff",
+    editorIds: []
+  });
+  assert.equal(state.awards.at(-1).points, 30);
+  assert.equal(canEditStudentRecord(state, delegated.id, state.awards.at(-1)), false);
+
+  state = addAcademicConcern(state, {
+    studentIds: ["random1"],
+    tier: 1,
+    issueIds: ["Missing or incomplete work"],
+    title: "Follow-up",
+    description: "Work pattern observed.",
+    actionDetails: "Conference held.",
+    teacherId: "david",
+    editorIds: [leader.id],
+    incidentDate: "2026-11-02"
+  });
+  const concern = state.academicConcerns.at(-1);
+  assert.equal(canEditStudentRecord(state, leader.id, concern), true);
+  state = updateConcern(state, "academic", concern.id, leader.id, {
+    title: "Updated follow-up",
+    description: "Updated observation.",
+    incidentDate: "2026-11-03",
+    actionDetails: "Second conference held.",
+    editorIds: [leader.id]
+  });
+  assert.equal(state.academicConcerns.at(-1).title, "Updated follow-up");
 });
 
 test("House leader teachers publish only their own House events", () => {

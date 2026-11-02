@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const port = Number.parseInt(process.env.PORT ?? "4173", 10);
-const host = process.env.HOST ?? "0.0.0.0";
+const host = process.env.HOST ?? "127.0.0.1";
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -22,7 +22,7 @@ const server = createServer((request, response) => {
   const relativePath = requestPath === "/" ? "index.html" : requestPath.replace(/^\/+/, "");
   const normalizedPath = normalize(relativePath);
 
-  if (normalizedPath.startsWith("..")) {
+  if (normalizedPath.startsWith("..") || normalizedPath.startsWith(".") || (normalizedPath.startsWith("private/") && normalizedPath !== "private/roster.json")) {
     response.writeHead(403);
     response.end("Forbidden");
     return;

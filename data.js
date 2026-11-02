@@ -71,7 +71,19 @@ export const HOUSES = [
   }
 ];
 
-export const TEACHER_ROLES = ["teacher", "house-leader", "super-admin"];
+export const TEACHER_ROLES = [
+  "teacher",
+  "house-leader",
+  "teacher-supervising",
+  "super-admin"
+];
+
+export const TEACHER_ROLE_LABELS = {
+  teacher: "Regular teacher",
+  "house-leader": "Leader teacher",
+  "teacher-supervising": "Teacher supervising",
+  "super-admin": "Super admin"
+};
 
 const DEMO_TEACHERS = [
   { id: "david", username: "david", name: "David", houseId: null, role: "teacher" },
@@ -169,6 +181,8 @@ function isRosterTeacher(teacher) {
 }
 
 async function loadLocalRoster() {
+  if (typeof document === "undefined" || typeof window === "undefined") return null;
+  if (window.location.hostname.endsWith(".vercel.app") || new URLSearchParams(window.location.search).has("cloud")) return null;
   for (const source of ["/api/roster", "./private/roster.json"]) {
     try {
       const response = await fetch(source, { cache: "no-store", credentials: "same-origin" });
@@ -181,7 +195,16 @@ async function loadLocalRoster() {
       }
       return {
         students: roster.students.map((student) => ({ ...student })),
-        teachers: roster.teachers?.map((teacher) => ({ ...teacher })) ?? null
+        teachers:
+          roster.teachers?.map((teacher) => ({
+            ...teacher,
+            // Earlier rosters used `house-leader` to mean any teacher affiliated
+            // with a House. Status model 2 reserves it for actual teacher leaders.
+            role:
+              roster.staffStatusModel === 2 || teacher.role !== "house-leader"
+                ? teacher.role
+                : "teacher"
+          })) ?? null
       };
     } catch {
       // Try the next private roster source, then fall back to fictional demo data.
@@ -259,8 +282,29 @@ export function getTeacherPermissions(teacher) {
     canManageAccounts: role === "super-admin",
     canManageCalendarAccess: role === "super-admin",
     canCreateCalendarEvents: role === "super-admin" || role === "house-leader",
-    canEditAllCalendarEvents: role === "super-admin"
+    canEditAllCalendarEvents: role === "super-admin",
+    canEditAllStudentRecords: role === "super-admin" || role === "teacher-supervising"
   };
+}
+
+function normalizeRecordEditorIds(state, editorIds, authorId) {
+  const teachers = state.teachers ?? TEACHERS;
+  const knownTeacherIds = new Set(teachers.map((teacher) => teacher.id));
+  return [...new Set(editorIds ?? [])].filter((teacherId) => {
+    if (teacherId === authorId || !knownTeacherIds.has(teacherId)) return false;
+    const teacher = teachers.find((item) => item.id === teacherId);
+    return !getTeacherPermissions(teacher).canEditAllStudentRecords;
+  });
+}
+
+export function canEditStudentRecord(state, teacherId, record) {
+  const teacher = (state.teachers ?? TEACHERS).find((item) => item.id === teacherId);
+  if (!teacher || !record) return false;
+  return Boolean(
+    record.teacherId === teacherId ||
+      getTeacherPermissions(teacher).canEditAllStudentRecords ||
+      record.editorIds?.includes(teacherId)
+  );
 }
 
 function requireSuperAdmin(state, user) {
@@ -318,6 +362,38 @@ export function createTeacherAccount(state, user, { name, houseId = null, role =
     role
   };
   return { ...state, teachers: [...(state.teachers ?? TEACHERS), teacher] };
+}
+
+export function updateTeacherAccountStatus(
+  state,
+  user,
+  teacherId,
+  { role, houseId = null }
+) {
+  requireSuperAdmin(state, user);
+  const teacher = (state.teachers ?? TEACHERS).find((item) => item.id === teacherId);
+  const normalizedHouseId = houseId || null;
+  if (!teacher) throw new Error("Unknown teacher");
+  if (!TEACHER_ROLES.includes(role)) throw new Error("Choose a valid teacher status");
+  if (normalizedHouseId && !HOUSES.some((house) => house.id === normalizedHouseId)) {
+    throw new Error("Choose a valid house");
+  }
+  if (role === "house-leader" && !normalizedHouseId) {
+    throw new Error("A leader teacher must be assigned to a house");
+  }
+  if (
+    teacher.role === "super-admin" &&
+    role !== "super-admin" &&
+    (state.teachers ?? TEACHERS).filter((item) => item.role === "super-admin").length === 1
+  ) {
+    throw new Error("At least one super admin must remain");
+  }
+  return {
+    ...state,
+    teachers: (state.teachers ?? TEACHERS).map((item) =>
+      item.id === teacherId ? { ...item, role, houseId: normalizedHouseId } : item
+    )
+  };
 }
 
 export function transferStudentHouse(state, user, studentId, houseId) {
@@ -383,7 +459,7 @@ export function createInitialState(now = Date.now()) {
   }
 
   return {
-    version: 7,
+    version: 9,
     students: STUDENTS.map((student) => ({ ...student })),
     teachers: TEACHERS.map((teacher) => ({ ...teacher })),
     awards,
@@ -407,7 +483,8 @@ export function addAward(
   teacherId,
   points = DEFAULT_POINTS,
   now = Date.now(),
-  comment = ""
+  comment = "",
+  editorIds = []
 ) {
   if (!state.students.some((student) => student.id === studentId)) {
     throw new Error("Unknown student");
@@ -442,6 +519,7 @@ export function addAward(
         teacherId,
         points,
         comment: normalizedComment,
+        editorIds: normalizeRecordEditorIds(state, editorIds, teacherId),
         createdAt: new Date(now).toISOString()
       }
     ]
@@ -458,13 +536,50 @@ export function removeAward(state, awardId, teacherId) {
     throw new Error("Unknown recognition");
   }
 
-  if (award.teacherId !== teacherId) {
-    throw new Error("A teacher can only unsend their own recognition");
+  if (!canEditStudentRecord(state, teacherId, award)) {
+    throw new Error("You do not have permission to unsend this recognition");
   }
 
   return {
     ...state,
     awards: state.awards.filter((item) => item.id !== awardId)
+  };
+}
+
+export function updateAward(state, awardId, teacherId, changes, now = Date.now()) {
+  validateTeacher(state, teacherId);
+  const award = state.awards.find((item) => item.id === awardId);
+  if (!award) throw new Error("Unknown recognition");
+  if (!canEditStudentRecord(state, teacherId, award)) {
+    throw new Error("You do not have permission to edit this recognition");
+  }
+  if (award.sourceType === "behavior-concern") {
+    throw new Error("Edit this deduction from its linked behavior concern");
+  }
+  const valueId = String(changes.valueId ?? award.valueId);
+  const points = Number(changes.points ?? award.points);
+  const comment = normalizeText(changes.comment ?? award.comment, MAX_COMMENT_LENGTH);
+  if (!VALUES.some((value) => value.id === valueId)) throw new Error("Unknown HCAS value");
+  if (!POINT_OPTIONS.includes(points)) throw new Error("Invalid point amount");
+  return {
+    ...state,
+    awards: state.awards.map((item) =>
+      item.id === awardId
+        ? {
+            ...item,
+            valueId,
+            points,
+            comment,
+            editorIds: normalizeRecordEditorIds(
+              state,
+              changes.editorIds ?? item.editorIds,
+              item.teacherId
+            ),
+            updatedAt: new Date(now).toISOString(),
+            updatedBy: teacherId
+          }
+        : item
+    )
   };
 }
 
@@ -570,6 +685,7 @@ export function addBehaviorConcern(state, payload, now = Date.now()) {
     teacherActions,
     confidentialNote,
     teacherId,
+    editorIds: normalizeRecordEditorIds(state, payload.editorIds, teacherId),
     incidentDate,
     incidentTime,
     location: location === "Other location" ? otherLocation : location,
@@ -586,6 +702,7 @@ export function addBehaviorConcern(state, payload, now = Date.now()) {
         studentId,
         valueId: deductionValueId,
         teacherId,
+        editorIds: normalizeRecordEditorIds(state, payload.editorIds, teacherId),
         points: -deductionPoints,
         comment: `Behavior demonstrates poor "${deductionValue.name}" value.`,
         sourceType: "behavior-concern",
@@ -638,6 +755,7 @@ export function addAcademicConcern(state, payload, now = Date.now()) {
     ),
     internalNote: normalizeText(payload.internalNote, MAX_INTERNAL_NOTE_LENGTH),
     teacherId,
+    editorIds: normalizeRecordEditorIds(state, payload.editorIds, teacherId),
     incidentDate,
     publishedAt: new Date(now).toISOString(),
     ...normalizeAttachmentPayload(payload)
@@ -681,6 +799,7 @@ export function addSelConcern(state, payload, now = Date.now()) {
     followUp: normalizeText(payload.followUp, MAX_CONCERN_DESCRIPTION_LENGTH),
     confidentialNote: normalizeText(payload.confidentialNote, MAX_INTERNAL_NOTE_LENGTH),
     teacherId,
+    editorIds: normalizeRecordEditorIds(state, payload.editorIds, teacherId),
     incidentDate,
     publishedAt: new Date(now).toISOString(),
     ...normalizeAttachmentPayload(payload)
@@ -688,6 +807,96 @@ export function addSelConcern(state, payload, now = Date.now()) {
   return {
     ...state,
     selConcerns: [...(state.selConcerns ?? []), concern]
+  };
+}
+
+export function updateConcern(state, type, concernId, teacherId, changes, now = Date.now()) {
+  validateTeacher(state, teacherId);
+  const collections = {
+    behavior: "behaviorConcerns",
+    academic: "academicConcerns",
+    sel: "selConcerns"
+  };
+  const collectionName = collections[type];
+  if (!collectionName) throw new Error("Unknown concern type");
+  const concern = (state[collectionName] ?? []).find((item) => item.id === concernId);
+  if (!concern) throw new Error("Unknown concern");
+  if (!canEditStudentRecord(state, teacherId, concern)) {
+    throw new Error("You do not have permission to edit this concern");
+  }
+
+  const updated = {
+    ...concern,
+    title: normalizeRequiredText(
+      changes.title ?? concern.title,
+      MAX_CONCERN_TITLE_LENGTH,
+      "Concern title"
+    ),
+    description: normalizeRequiredText(
+      changes.description ?? concern.description,
+      MAX_CONCERN_DESCRIPTION_LENGTH,
+      "Concern description"
+    ),
+    incidentDate: validateDateInput(changes.incidentDate ?? concern.incidentDate),
+    editorIds: normalizeRecordEditorIds(
+      state,
+      changes.editorIds ?? concern.editorIds,
+      concern.teacherId
+    ),
+    updatedAt: new Date(now).toISOString(),
+    updatedBy: teacherId
+  };
+
+  if (type === "behavior") {
+    updated.incidentTime = validateTimeInput(changes.incidentTime ?? concern.incidentTime ?? "13:15");
+    updated.location = normalizeRequiredText(
+      changes.location ?? concern.location ?? "Classroom",
+      160,
+      "Incident location"
+    );
+    updated.customAction = normalizeText(
+      changes.customAction ?? concern.customAction,
+      MAX_CONCERN_DESCRIPTION_LENGTH
+    );
+    updated.confidentialNote = normalizeText(
+      changes.confidentialNote ?? concern.confidentialNote,
+      MAX_INTERNAL_NOTE_LENGTH
+    );
+  } else if (type === "academic") {
+    updated.actionDetails = normalizeRequiredText(
+      changes.actionDetails ?? concern.actionDetails,
+      MAX_CONCERN_DESCRIPTION_LENGTH,
+      "Academic action taken"
+    );
+    updated.internalNote = normalizeText(
+      changes.internalNote ?? concern.internalNote,
+      MAX_INTERNAL_NOTE_LENGTH
+    );
+  } else {
+    updated.followUp = normalizeText(
+      changes.followUp ?? concern.followUp,
+      MAX_CONCERN_DESCRIPTION_LENGTH
+    );
+    updated.confidentialNote = normalizeText(
+      changes.confidentialNote ?? concern.confidentialNote,
+      MAX_INTERNAL_NOTE_LENGTH
+    );
+  }
+
+  const nextState = {
+    ...state,
+    [collectionName]: state[collectionName].map((item) =>
+      item.id === concernId ? updated : item
+    )
+  };
+  if (type !== "behavior") return nextState;
+  return {
+    ...nextState,
+    awards: state.awards.map((award) =>
+      award.sourceConcernId === concernId
+        ? { ...award, editorIds: updated.editorIds, updatedAt: updated.updatedAt, updatedBy: teacherId }
+        : award
+    )
   };
 }
 
@@ -743,6 +952,7 @@ export function getStudentSelCheckIns(state, studentId) {
 }
 
 export function getHouseTotals(state) {
+  if (state.houseTotals) return state.houseTotals;
   const totals = Object.fromEntries(HOUSES.map((house) => [house.id, 0]));
   const studentHouse = Object.fromEntries(state.students.map((student) => [student.id, student.houseId]));
 
@@ -1137,7 +1347,7 @@ export function isValidStoredState(state) {
   const baseTeacherIds = new Set(TEACHERS.map((teacher) => teacher.id));
   return Boolean(
     state &&
-      state.version === 7 &&
+      state.version === 9 &&
       Array.isArray(state.students) &&
       state.students.length >= STUDENTS.length &&
       Array.isArray(state.teachers) &&
@@ -1169,7 +1379,7 @@ export function migrateStoredState(state) {
     return state;
   }
 
-  if (!state || ![2, 3, 4, 5, 6].includes(state.version) || !Array.isArray(state.students) || !Array.isArray(state.awards)) {
+  if (!state || ![2, 3, 4, 5, 6, 7, 8].includes(state.version) || !Array.isArray(state.students) || !Array.isArray(state.awards)) {
     return null;
   }
 
@@ -1189,15 +1399,31 @@ export function migrateStoredState(state) {
   const academicConcerns = rosterMatches
     ? (state.academicConcerns ?? []).filter((concern) => concern.studentIds?.every((id) => validStudentIds.has(id)))
     : [];
+  const baseTeacherIds = new Set(TEACHERS.map((teacher) => teacher.id));
+  const migratedTeachers = [
+    ...TEACHERS.map((teacher) => ({ ...teacher })),
+    ...legacyTeachers
+      .filter((teacher) => !baseTeacherIds.has(teacher.id))
+      .map((teacher) => ({ ...teacher }))
+  ];
 
   return {
-    version: 7,
+    version: 9,
     students: STUDENTS.map((student) => ({ ...student })),
-    teachers: TEACHERS.map((teacher) => ({ ...teacher })),
-    awards: awards.map((award) => ({ ...award })),
-    behaviorConcerns,
-    academicConcerns,
-    selConcerns: state.selConcerns ?? [],
+    teachers: migratedTeachers,
+    awards: awards.map((award) => ({ ...award, editorIds: award.editorIds ?? [] })),
+    behaviorConcerns: behaviorConcerns.map((concern) => ({
+      ...concern,
+      editorIds: concern.editorIds ?? []
+    })),
+    academicConcerns: academicConcerns.map((concern) => ({
+      ...concern,
+      editorIds: concern.editorIds ?? []
+    })),
+    selConcerns: (state.selConcerns ?? []).map((concern) => ({
+      ...concern,
+      editorIds: concern.editorIds ?? []
+    })),
     selCheckIns: state.selCheckIns ?? [],
     leadershipAssignments: state.leadershipAssignments ?? {
       houseLeaders: Object.fromEntries(HOUSES.map((house) => [house.id, []])),
@@ -1217,6 +1443,7 @@ function isValidAward(award, students, teachers) {
       (POINT_OPTIONS.includes(award.points) || POINT_OPTIONS.includes(-award.points)) &&
       (award.comment === undefined ||
         (typeof award.comment === "string" && award.comment.length <= MAX_COMMENT_LENGTH)) &&
+      isValidEditorIds(award.editorIds, teachers) &&
       !Number.isNaN(new Date(award.createdAt).getTime())
   );
 }
@@ -1230,6 +1457,7 @@ function isValidBehaviorConcern(concern, students, teachers) {
       typeof concern.title === "string" &&
       typeof concern.description === "string" &&
       teachers.some((teacher) => teacher.id === concern.teacherId) &&
+      isValidEditorIds(concern.editorIds, teachers) &&
       !Number.isNaN(new Date(concern.incidentDate).getTime()) &&
       !Number.isNaN(new Date(concern.publishedAt).getTime())
   );
@@ -1245,6 +1473,7 @@ function isValidAcademicConcern(concern, students, teachers) {
       typeof concern.description === "string" &&
       typeof concern.actionDetails === "string" &&
       teachers.some((teacher) => teacher.id === concern.teacherId) &&
+      isValidEditorIds(concern.editorIds, teachers) &&
       !Number.isNaN(new Date(concern.incidentDate).getTime()) &&
       !Number.isNaN(new Date(concern.publishedAt).getTime())
   );
@@ -1259,8 +1488,18 @@ function isValidSelConcern(concern, students, teachers) {
       typeof concern.title === "string" &&
       typeof concern.description === "string" &&
       teachers.some((teacher) => teacher.id === concern.teacherId) &&
+      isValidEditorIds(concern.editorIds, teachers) &&
       !Number.isNaN(new Date(concern.incidentDate).getTime()) &&
       !Number.isNaN(new Date(concern.publishedAt).getTime())
+  );
+}
+
+function isValidEditorIds(editorIds, teachers) {
+  return Boolean(
+    editorIds === undefined ||
+      (Array.isArray(editorIds) &&
+        new Set(editorIds).size === editorIds.length &&
+        editorIds.every((teacherId) => teachers.some((teacher) => teacher.id === teacherId)))
   );
 }
 
