@@ -1,0 +1,335 @@
+/* Shared presentation layer. Existing component rules retain behavior and states. */
+:root {
+  --sidebar-width: 216px;
+  --background: #fff;
+  --line: #e4e8ec;
+  --muted: #627080;
+  --selection-gold: #8b6c22;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body { font-size: 14px; line-height: 1.45; }
+.app-shell :is(h1, h2, h3, h4, h5, strong, th, legend, summary) { font-weight: 600; }
+.app-shell button { font-weight: 500; }
+.app-shell :is(input, select, textarea) { font-weight: 400; }
+.app-shell :is(button, input, select, textarea) { box-shadow: none; }
+.app-shell :is(h1, h2, h3, h4, h5) { letter-spacing: -.015em; }
+.sidebar { padding: 22px 14px 18px; }
+.brand-lockup { gap: 10px; margin-bottom: 30px; padding: 0 6px; }
+.brand-lockup img { width: 54px; height: 44px; border: 0; border-radius: 0; }
+.brand-lockup strong { font-size: 16px; }
+.brand-lockup span { font-size: 12px; }
+.side-nav { gap: 3px; }
+.nav-button { min-height: 40px; gap: 10px; padding: 0 10px; border-radius: 6px; font-size: 13px; }
+.nav-button svg { width: 18px; height: 18px; }
+.sidebar-account { grid-template-columns: 32px minmax(0, 1fr) auto; gap: 7px; padding: 14px 0 0; }
+.teacher-avatar { width: 32px; height: 28px; border: 0; border-radius: 0; }
+.sidebar-account strong { font-size: 12px; }
+.sidebar-account div span { font-size: 11px; }
+.sidebar-account button { padding: 0 3px; font-size: 11px; }
+.topbar { height: 56px; padding: 0 28px; }
+.topbar-house-scores { gap: 12px; }
+.topbar-actions .topbar-house-score { border-color: transparent; border-radius: 5px; width: 38px; min-height: 38px; }
+.topbar-house-score img { width: 30px; height: 30px; }
+.topbar-house-score span { font-weight: 600; }
+.page { width: min(1280px, 100%); padding: 26px 32px 40px; }
+.page-header, .page-header:not(:has(p)) { min-height: 32px; margin-bottom: 20px; gap: 16px; align-items: center; }
+.page-header h1 { font-size: 23px; line-height: 1.25; font-weight: 600; }
+.page-header p { margin-top: 5px; font-size: 13px; }
+.app-shell .primary-button, .app-shell .secondary-button { min-height: 36px; padding: 7px 13px; border-radius: 6px; font-size: 13px; line-height: 1.3; }
+.secondary-button { border-color: #cdd5dc; }
+.text-button { text-decoration: none; font-size: 13px; }
+.text-button:hover { text-decoration: underline; }
+.panel { border-radius: 8px; box-shadow: none; }
+.panel-heading, .list-heading { min-height: 54px; padding: 12px 16px; gap: 12px; }
+.panel-heading h2, .list-heading h2, .app-shell .support-section h2 { font-size: 16px; }
+.panel-heading p, .list-heading span { font-size: 12px; }
+.dashboard-layout { gap: 20px; }
+.student-ranking-panel { margin-top: 20px; }
+.house-row { min-height: 82px; padding: 12px 16px; gap: 12px; }
+.house-row > img { width: 48px; height: 48px; }
+.house-info h3 { font-size: 14px; }
+.house-score strong { font-size: 21px; font-weight: 600; }
+.house-cup-history { gap: 3px; }
+.house-top-students { padding: 8px 16px 12px; }
+.ranking-filters { gap: 14px; padding: 14px 16px; }
+.ranking-filters label, .form-grid label, .full-field, .calendar-event-form label, .compact-admin-form label { font-size: 12px; font-weight: 500; }
+.ranking-filters :is(input, select), .form-grid :is(input, select), .full-field :is(input, select) { min-height: 36px; border-radius: 6px; font-size: 13px; }
+.ranking-table th, .activity-table th, .record-table th { background: #fafbfc; font-size: 11px; font-weight: 500; letter-spacing: .015em; }
+.ranking-table td, .activity-table td, .record-table td { padding-top: 10px; padding-bottom: 10px; }
+.student-identity-copy strong { font-weight: 500; font-size: 13px; }
+.student-identity-copy > span { font-size: 11px; }
+.points-notification { font-weight: 600; }
+
+/* Calendar: neutral canvas, compact controls, quiet event rows. */
+.calendar-section { border-radius: 8px; margin-bottom: 24px; overflow-x: auto; }
+.calendar-heading { display: flex; min-height: 62px; gap: 14px; padding: 14px 16px; color: var(--ink); background: #fff; border-bottom: 1px solid var(--line); }
+.calendar-heading > div:first-child { margin-right: auto; }
+.calendar-heading h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.calendar-toolbar { gap: 10px; align-items: center; }
+.calendar-toolbar label { color: var(--muted); }
+.calendar-toolbar select { border: 1px solid var(--line); border-radius: 6px; font-size: 12px; font-weight: 400; }
+.calendar-create-trigger { min-height: 34px; padding: 6px 11px; border: 1px solid var(--line); border-radius: 6px; color: var(--navy); background: white; font-size: 12px; }
+.calendar-create-trigger:hover { background: var(--school-gold-soft); }
+.calendar-week-controls { background: white; border: 1px solid var(--line); border-radius: 6px; }
+.calendar-week-controls button { min-height: 34px; color: var(--navy); font-size: 12px; font-weight: 500; }
+.calendar-week-controls button:first-child, .calendar-week-controls button:last-child { color: var(--muted); }
+.calendar-week-controls button:hover { background: #f4f6f8; }
+.calendar-week-label { padding: 10px 16px; text-align: left; font-size: 12px; font-weight: 500; }
+.calendar-week-grid { min-width: 840px; grid-template-columns: repeat(7, minmax(120px, 1fr)); max-height: 470px; overflow-y: auto; padding: 0 10px 10px; scrollbar-width: thin; }
+.calendar-day { padding: 0 5px 8px; }
+.calendar-day > header { position: sticky; top: 0; z-index: 1; min-height: 36px; background: white; }
+.calendar-day > header span { font-size: 11px; font-weight: 500; text-transform: none; }
+.calendar-day > header strong { width: 24px; height: 24px; font-size: 12px; font-weight: 500; }
+.calendar-day-events { gap: 3px; padding-top: 5px; }
+.calendar-event { padding: 8px 7px; border: 0; border-radius: 4px; background: #f5f7f9; transition: background 150ms; }
+.calendar-event:is(.is-house, .is-lab, .is-level-up, .is-school, .is-assembly) { background: #f5f7f9; border-left: 0; }
+.calendar-event:hover { transform: none; box-shadow: none; background: #eaf0f5; }
+.calendar-event > span { color: var(--muted); font-size: 10px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.calendar-event > strong { font-size: 12px; font-weight: 500; line-height: 1.35; }
+.calendar-event > small { font-size: 10px; line-height: 1.4; }
+.calendar-empty { font-size: 11px; padding: 15px 4px; }
+
+/* Notifications must leave room for both text and response controls. */
+.support-section.notification-panel { padding: 0 0 14px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; margin-bottom: 22px; }
+.notification-panel > .record-section-heading { min-height: 30px; margin-bottom: 5px; }
+.notification-panel > .record-section-heading > span { font-size: 12px; }
+.notification-panel ul { margin: 8px 0; max-height: 300px; }
+.notification-panel li { display: grid; grid-template-columns: minmax(200px, 1fr) minmax(240px, 1.35fr); align-items: start; gap: 16px; padding: 12px 14px; }
+.notification-panel li.is-unread { background: #fdfcf7; border-left-width: 3px; }
+.notification-panel li > div { min-width: 0; overflow-wrap: break-word; }
+.notification-panel li strong { font-size: 13px; }
+.notification-panel p { font-size: 12px; margin: 4px 0; }
+.notification-panel time { font-size: 11px; }
+.notification-panel .notification-actions { display: flex; flex-wrap: wrap; flex-shrink: 1; gap: 5px 12px; }
+.notification-panel .notification-actions .secondary-button { min-height: 32px; padding: 6px 9px; font-size: 12px; justify-content: start; }
+.notification-panel .notification-actions .text-button { min-height: 32px; padding: 5px 0; font-size: 12px; }
+.phone-notifications { margin: 4px 0 0; padding: 0; border: 0; border-radius: 0; }
+.phone-notifications > summary { padding: 8px 0; font-size: 12px; color: var(--muted); font-weight: 400; }
+.phone-notifications p { max-width: 85ch; }
+
+/* Forms use section dividers instead of nested cards. */
+.send-layout { grid-template-columns: minmax(0, 1fr) 280px; gap: 28px; }
+.award-form-panel { padding: 0; border: 0; border-radius: 0; }
+.app-shell legend { font-size: 14px; font-weight: 600; gap: 8px; margin-bottom: 14px; }
+legend > span, .concern-section > legend > span { width: 22px; height: 22px; background: #f0f3f5; color: var(--muted); font-size: 11px; font-weight: 500; }
+.point-choice, .student-choice, .comment-choice { margin-top: 22px; padding-top: 20px; }
+.value-options { gap: 8px; }
+.value-option { width: 104px; flex-basis: 104px; height: 110px; border-radius: 6px; padding: 10px 5px; gap: 7px; }
+.value-option > .value-logo { width: 58px; height: 53px; }
+.value-option strong { font-size: 11px; font-weight: 500; }
+.value-option.is-selected, .point-option.is-selected, .house-filters button.is-selected, .grade-filters button.is-selected, .send-student-option.is-selected, .concern-student-option > input:checked + span { background: var(--selection-gold); border-color: var(--selection-gold); color: white; }
+.point-option { min-height: 48px; border-radius: 6px; }
+.point-option strong { font-size: 15px; }
+.point-option span { font-size: 10px; font-weight: 400; text-transform: none; }
+.student-controls { margin-bottom: 18px; gap: 10px; }
+.search-field { min-height: 38px; border-radius: 6px; }
+.search-field input { min-height: 36px; font-size: 13px; }
+.house-filters, .grade-filters { gap: 6px; }
+.house-filters button, .grade-filters button { min-height: 32px; padding: 5px 10px; border-radius: 5px; font-size: 12px; }
+.house-filters img { width: 22px; height: 22px; }
+.student-choice .student-controls, .concern-section .student-controls { margin: 8px 0 14px; }
+.send-student-option { min-height: 54px; border-radius: 6px; }
+.student-select-heading, #send-student-count { font-size: 12px; }
+.comment-choice textarea { min-height: 84px; border-radius: 6px; font-size: 13px; }
+.comment-meta { justify-content: end; font-size: 11px; }
+.send-summary { border-radius: 8px; box-shadow: none; }
+.summary-house { padding: 16px; }
+.summary-house h2 { font-size: 16px; font-weight: 600; }
+.summary-house-empty { min-height: 100px; padding: 16px; background: #fafbfc; color: var(--ink); border: 0; }
+.summary-house-empty h2 { font-size: 14px; }
+.summary-house-empty p { color: var(--muted); font-size: 12px; }
+.send-summary dl { margin: 0; padding: 12px 16px; }
+.send-summary dl div { padding: 8px 0; }
+.send-summary :is(dt, dd) { font-size: 12px; }
+.send-summary .primary-button { margin: 0 16px 16px; }
+.concern-form { padding: 0; border: 0; overflow: visible; }
+.concern-source-note { margin: 0 0 20px; padding: 10px 0; gap: 12px; background: none; border-bottom: 1px solid var(--line); }
+.concern-source-note.is-teacher-only { background: none; }
+.concern-source-note strong { font-size: 13px; }
+.concern-source-note span { font-size: 12px; }
+.concern-section { padding: 18px 0 22px; }
+.concern-section > legend { font-size: 14px; font-weight: 600; }
+.full-field { display: grid; gap: 6px; }
+.full-field > input, .full-field > textarea, .full-field > select { width: 100%; padding: 9px 11px; border: 1px solid #cdd5dc; border-radius: 6px; color: var(--ink); background: white; font-size: 13px; }
+.full-field > textarea { resize: vertical; }
+.form-grid { margin-top: 10px; }
+.concern-student-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.concern-student-option > span { min-height: 56px; border-radius: 6px; }
+.confidential-section { margin: 0; padding-left: 0; padding-right: 0; background: none; }
+.visibility-note { background: none; padding: 0; color: var(--muted); }
+.automatic-action > p { padding: 0; background: none; }
+.automatic-action section { padding: 12px 0; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
+.strategy-picker { border-radius: 6px; }
+.strategy-picker > summary { min-height: 44px; padding: 9px 12px; }
+.other-check { padding: 6px 0; background: none; }
+.field-help, .visibility-note { font-size: 12px; margin: 6px 0 12px; }
+.issue-options { gap: 6px 18px; }
+.issue-option > span { min-height: 52px; padding: 10px; border-radius: 5px; background: white; }
+.issue-option strong { font-size: 12px; font-weight: 500; }
+.sel-concern-option { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
+.sel-concern-option > label { min-height: 48px; padding: 10px 4px; }
+.sel-concern-option details { border: 0; padding: 0 4px 10px 30px; }
+.sel-concern-option summary { font-weight: 500; }
+.editor-access-section { background: none; }
+.editor-access-picker { gap: 10px; }
+.editor-access-heading { margin-bottom: 0; }
+.editor-access-heading span:not(.privacy-badge) { font-size: 12px; }
+.required-editor-list { gap: 6px 16px; }
+.required-editor-list > span, .required-editor-list .is-policy { padding: 3px 0; min-width: 0; border: 0; border-radius: 0; background: none; font-size: 12px; font-weight: 500; }
+.required-editor-list b { font-size: 11px; }
+.required-editor-list small { color: var(--muted); font-size: 10px; font-weight: 400; }
+.optional-editor-picker { border: 0; border-top: 1px solid var(--line); border-radius: 0; }
+.optional-editor-picker summary { padding: 10px 0; font-size: 12px; font-weight: 500; }
+.optional-editor-grid { padding: 10px 0; }
+.optional-editor-grid label { border-radius: 5px; padding: 7px; }
+.form-submit-bar { margin: 0; padding: 16px 0; background: none; }
+
+/* Profiles and records stay aligned without surrounding every subsection. */
+.student-crest-grid { gap: 8px 12px; padding: 14px 16px 18px; }
+.student-crest { padding: 6px; border-radius: 7px; }
+.student-crest-visual { max-width: 160px; margin-inline: auto; }
+.student-crest-name { font-weight: 600; }
+.profile-heading { min-height: 84px; grid-template-columns: 50px minmax(0, 1fr) auto; padding: 16px 62px 16px 16px; gap: 12px; background: white; }
+.profile-heading > img { width: 50px; height: 50px; }
+.profile-heading h2 { font-size: 18px; }
+.profile-total { min-width: 65px; padding: 6px 10px; border-radius: 6px; }
+.profile-total strong { font-size: 20px; font-weight: 600; }
+.profile-total span { font-size: 10px; }
+.value-breakdown { padding: 14px 16px; }
+.breakdown-heading { margin-bottom: 12px; }
+.breakdown-heading { min-height: 34px; }
+.breakdown-row { min-height: 48px; padding: 8px 0; }
+.breakdown-name strong { font-size: 13px; font-weight: 500; }
+.support-section, .profile-record-section { padding: 18px 16px; }
+.profile-record-section .support-section { padding-inline: 0; }
+.record-section-heading { min-height: 36px; margin-bottom: 12px; gap: 10px; }
+.record-section-heading h3, .support-section h3 { font-size: 15px; }
+.record-section-heading span { font-size: 12px; }
+.support-section label { font-size: 12px; font-weight: 500; }
+.support-section form { gap: 10px; }
+.smart-goal { padding: 14px 0; margin: 12px 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; }
+.goal-origin { text-transform: none; font-size: 11px; font-weight: 500; }
+.goal-status { padding: 4px 8px; border-radius: 5px; }
+.smart-goal h4 { font-size: 15px; }
+.smart-field { padding: 12px 0; }
+.smart-field h5 { font-size: 13px; }
+.concern-followup, .goal-reflection { padding: 12px 0; background: none; border: 0; border-top: 1px solid var(--line); border-radius: 0; }
+.concern-followup strong { font-size: 12px; }
+.record-edit-button { border-radius: 5px; background: none; border-color: var(--line); font-weight: 500; }
+.record-access-summary { display: block; margin: 3px 0 0; font-size: 11px; }
+.record-access-summary > summary { cursor: pointer; color: var(--muted); }
+.record-access-summary > p { margin: 6px 0; max-width: 30ch; }
+.teacher-breakdown-panel, .teacher-history-panel { height: 460px; }
+.teacher-stat-row { min-height: 48px; }
+.teacher-total { min-height: 27px; padding-inline: 9px; }
+.history-count { width: 27px; height: 27px; }
+.teacher-history-list li { min-height: 82px; grid-template-columns: minmax(0, 1fr) auto auto; gap: 2px 10px; padding: 10px 14px; }
+.teacher-history-list .teacher-history-entry { grid-column: 1; grid-row: 1 / span 2; align-self: center; }
+.teacher-history-list .recognition-time { grid-column: 2 / -1; grid-row: 1; text-align: right; font-size: 10px; }
+.teacher-history-list .record-edit-button { grid-column: 2; grid-row: 2; min-height: 28px; padding: 3px 0; border: 0; }
+.teacher-history-list .unsend-button { grid-column: 3; grid-row: 2; min-height: 28px; padding: 3px 0; border: 0; border-radius: 0; background: transparent; font-size: 11px; }
+.teacher-history-list .unsend-button:hover { color: var(--school-red-dark); text-decoration: underline; background: none; }
+.student-value-history, .teacher-value-history { padding: 10px 12px; background: #fafbfc; border: 0; border-radius: 4px; }
+.recognition-comment { padding: 0; background: none; border: 0; border-radius: 0; }
+.support-section.notification-panel { display: flex; flex-direction: column; }
+.notification-panel .phone-notifications { order: 2; }
+.student-calendar-identity { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 0 0 16px; gap: 12px; grid-template-columns: 48px 1fr auto; }
+.student-calendar-identity > img { width: 44px; height: 44px; }
+.student-calendar-identity h2 { font-size: 16px; }
+.student-access-badges span { padding: 4px 8px; border: 0; border-radius: 5px; font-weight: 500; }
+.calendar-admin { border-radius: 8px; }
+.calendar-admin > summary { min-height: 52px; padding: 12px 16px; font-weight: 600; font-size: 14px; }
+.calendar-admin-grid > section { padding: 16px; }
+.calendar-admin-grid h3 { font-size: 14px; }
+.leader-assignment-list > div, .lab-assignment-list li { background: white; border-radius: 0; border-bottom: 1px solid var(--line); padding: 8px 0; }
+.modal-panel { border-radius: 10px; padding: 24px; box-shadow: 0 16px 64px #14263826; }
+.modal-backdrop { background: #14263866; backdrop-filter: none; }
+.modal-panel .detail-close { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 5px; color: var(--muted); background: transparent; font-size: 22px; }
+.modal-panel .detail-close:hover { background: #f0f3f5; }
+.calendar-event-form > .form-grid { grid-column: 1 / -1; margin-top: 0; }
+.calendar-resources { padding-bottom: 0; border-bottom: 0; }
+.levelup-attachments { border-bottom: 0; }
+.modal-panel h2 { font-size: 20px; }
+.modal-panel :is(h3, h4) { font-size: 15px; }
+.modal-panel p { font-size: 13px; line-height: 1.5; }
+.modal-heading .eyebrow { font-size: 11px; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.record-edit-modal form > .editor-access-picker { padding: 12px 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; }
+.toast { font-size: 13px; font-weight: 500; border-radius: 6px; }
+
+/* A quiet, compact sign-in screen with the official Dalton emblem. */
+.login-panel { width: min(680px, 100%); min-height: 390px; grid-template-columns: .9fr 1.1fr; border-radius: 10px; }
+.login-brand { padding: 32px; background: #fafbfc; color: var(--navy-dark); border-bottom: 0; border-right: 1px solid var(--line); gap: 18px; }
+.login-brand img { width: 150px; height: 120px; border: 0; border-radius: 0; background: transparent; }
+.login-brand span { color: var(--muted); font-size: 12px; font-weight: 500; }
+.login-brand h1 { font-size: 24px; font-weight: 600; }
+.login-form { padding: 32px; }
+.login-form-heading { margin-bottom: 22px; }
+.login-form-heading h2 { font-size: 18px; font-weight: 600; }
+.login-form input { min-height: 40px; border-radius: 6px; margin-bottom: 16px; }
+.login-form label { font-weight: 500; }
+.login-button { min-height: 40px; border-radius: 6px; font-size: 14px; font-weight: 500; }
+
+@media (max-width: 1120px) and (min-width: 760px) {
+  .page { padding-inline: 24px; }
+  .send-layout { grid-template-columns: minmax(0, 1fr) 240px; gap: 20px; }
+  .calendar-heading { flex-wrap: wrap; }
+  .calendar-toolbar { margin-left: auto; }
+}
+@media (max-width: 900px) {
+  .notification-panel li { grid-template-columns: 1fr; gap: 10px; }
+  .send-layout { grid-template-columns: 1fr; }
+}
+@media (max-width: 759px) {
+  .page { padding: 20px 16px 32px; }
+  .page-header, .page-header:not(:has(p)) { margin-bottom: 18px; }
+  .page-header h1 { font-size: 21px; }
+  .topbar { height: 58px; padding-inline: 12px; }
+  .topbar-house-scores { gap: 9px; }
+  .mobile-brand { left: 12px; }
+  .mobile-brand img { width: 38px; height: 30px; }
+  .app-shell :is(input, select, textarea) { font-size: 16px; }
+  .app-shell .primary-button, .app-shell .secondary-button { min-height: 42px; }
+  .calendar-heading { width: calc(100vw - 34px); min-height: 0; padding: 12px; gap: 10px; flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .calendar-heading > div:first-child { flex: 1; }
+  .calendar-heading h2 { font-size: 15px; white-space: nowrap; }
+  .calendar-toolbar { flex-basis: 100%; justify-content: space-between; }
+  .calendar-toolbar select { max-width: 155px; }
+  .calendar-week-grid { min-width: 840px; max-height: 440px; }
+  .calendar-week-label { padding: 10px 12px; }
+  .calendar-create-trigger { min-height: 38px; }
+  .calendar-week-controls button { min-height: 38px; }
+  .notification-panel { padding-inline: 0; }
+  .notification-panel .record-section-heading { flex-direction: row; align-items: center; }
+  .notification-panel li { display: grid; align-items: start; padding: 12px; }
+  .notification-panel .notification-actions { flex-direction: row; align-items: center; }
+  .notification-panel .notification-actions .secondary-button { min-height: 40px; }
+  .notification-panel .notification-actions .text-button { min-height: 40px; }
+  .phone-notifications > summary { min-height: 40px; }
+  .award-form-panel { padding: 0; }
+  .value-option { width: 98px; flex-basis: 98px; height: 104px; }
+  .house-filters button, .grade-filters button { min-height: 40px; }
+  .send-student-option { min-height: 48px; }
+  .concern-form { padding: 0; }
+  .concern-source-note, .form-submit-bar, .confidential-section { margin-inline: 0; padding-inline: 0; }
+  .record-section-heading { gap: 8px; }
+  .profile-heading h2 { font-size: 17px; }
+  .teacher-history-list li { grid-template-columns: minmax(0, 1fr) auto; }
+  .teacher-history-list .teacher-history-entry { grid-column: 1 / -1; grid-row: 1; }
+  .teacher-history-list .recognition-time { grid-column: 1 / -1; grid-row: 2; text-align: left; }
+  .teacher-history-list .record-edit-button { grid-column: 1; grid-row: 3; justify-self: start; min-height: 40px; }
+  .teacher-history-list .unsend-button { grid-column: 2; grid-row: 3; min-height: 40px; }
+  .student-crest-grid { gap: 6px; padding: 10px; }
+  .student-calendar-identity { grid-template-columns: 44px 1fr; }
+  .student-access-badges { grid-column: 1 / -1; justify-content: start; }
+  .modal-panel, .calendar-event-panel.modal-panel { padding: 18px; border-radius: 10px; }
+  .bottom-nav { box-shadow: none; }
+  .bottom-nav > button { font-size: 10px; }
+  .login-screen { padding: 20px; }
+  .login-panel { display: block; width: min(380px, 100%); min-height: 0; }
+  .login-brand { flex-direction: row; align-items: center; padding: 24px 24px 0; border: 0; background: white; gap: 14px; }
+  .login-brand img { width: 76px; height: 60px; }
+  .login-brand h1 { font-size: 21px; margin: 3px 0; }
+  .login-form { padding: 24px; }
+  .login-form input { font-size: 16px; min-height: 44px; }
+}

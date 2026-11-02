@@ -29,6 +29,16 @@ Avoid childish classroom-game styling, casino-like rewards, excessive animation,
 5. Keep the same core workflow on phones and computers.
 6. Make privacy status explicit wherever information is teacher-only or student-safe.
 
+## Interface Direction
+
+Keep the interface quiet and compact: system sans-serif, modest headings, white surfaces,
+subtle dividers, and no decorative gradients or nested card backgrounds. Use official
+school and House assets for identity. Reserve gold for the 7Cs, point badges, and selection;
+use a deeper gold with white selection text for contrast. Put explanations beside the
+field they clarify, and collapse secondary access details instead of repeating policy
+under every record. Keep phone controls comfortable to tap and forms at least 16px on
+mobile. Shared presentation rules live in `interface.css`; avoid adding another theme layer.
+
 ## Accessibility & Inclusion
 
 Use clear contrast, readable type, large click targets, semantic buttons and labels, visible focus states, and reduced-motion support. Do not require users to configure accessibility settings before using the app.

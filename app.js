@@ -436,8 +436,7 @@ function renderEditorAccessPicker({ selectedIds = [], authorId = activeTeacher?.
   return `
     <div class="editor-access-picker">
       <div class="editor-access-heading">
-        <div><strong>Who can edit this record?</strong><span>All teachers can view it. Editing is limited.</span></div>
-        <span class="privacy-badge is-private">Staff access</span>
+        <div><span>The author, super admins and supervising teachers always have editing access.</span></div>
       </div>
       <div class="required-editor-list" aria-label="Editors who always have access">
         ${alwaysNames.map((teacher) => `<span title="This access cannot be removed"><b aria-hidden="true">🔒</b>${escapeHtml(teacher.name)}<small>${teacher.id === authorId ? "Author" : TEACHER_ROLE_LABELS[teacher.role]}</small></span>`).join("")}
@@ -457,7 +456,7 @@ function renderEditorAccessPicker({ selectedIds = [], authorId = activeTeacher?.
 
 function renderRecordAccessSummary(record) {
   const additionalEditors = (record.editorIds ?? []).map(getTeacher).filter(Boolean);
-  return `<p class="record-access-summary"><span aria-hidden="true">🔒</span> Editable by the author, Super admins, Teacher supervising${additionalEditors.length ? `, and ${additionalEditors.map((teacher) => escapeHtml(teacher.name)).join(", ")}` : ""}.</p>`;
+  return `<details class="record-access-summary"><summary>Editors</summary><p>The author, super admins and supervising teachers${additionalEditors.length ? `, and ${additionalEditors.map((teacher) => escapeHtml(teacher.name)).join(", ")}` : ""}.</p></details>`;
 }
 
 function canAccessAdministration() {
@@ -730,21 +729,12 @@ function getActiveStudent() {
   return activeUser?.type === "student" ? getStudent(activeUser.studentId) : null;
 }
 
-function getCalendarRoleLabel() {
+function getAccountRoleLabel() {
   const student = getActiveStudent();
-  if (!student) {
-    const teacher = activeUser?.type === "teacher" ? getTeacher(activeUser.id) : null;
-    if (teacher?.role === "super-admin") return "Super admin · Full school calendar";
-    if (teacher?.role === "teacher-supervising") return "Teacher supervising · Full school calendar";
-    if (isHouseLeaderTeacher(teacher)) {
-      return `Leader teacher · ${getHouse(teacher.houseId)?.name ?? "House"} · Full school calendar`;
-    }
-    return "Regular teacher · Full school calendar";
-  }
-  const isHouseLeader = (state.leadershipAssignments?.houseLeaders?.[student.houseId] ?? []).includes(student.id);
-  const labs = (state.leadershipAssignments?.labs ?? []).filter((lab) => lab.leaderIds.includes(student.id));
-  if (isHouseLeader || labs.length) return `House Captain/Lab Leader · Grade ${student.grade}`;
-  return `Student · Grade ${student.grade}`;
+  if (!student) return TEACHER_ROLE_LABELS[getTeacher(activeUser?.id)?.role] ?? "Teacher";
+  const isCaptain = (state.leadershipAssignments?.houseLeaders?.[student.houseId] ?? []).includes(student.id);
+  const isLabLeader = (state.leadershipAssignments?.labs ?? []).some(lab => lab.leaderIds.includes(student.id));
+  return isCaptain || isLabLeader ? "House Captain/Lab Leader" : "Student";
 }
 
 function getVisibleCalendarEvents(startDate = "2026-08-01", endDate = "2027-06-01") {
@@ -997,7 +987,7 @@ function renderAdministration() {
   if (!canAccessAdministration()) return renderDashboard();
   return `
     <div class="page administration-page">
-      ${renderPageHeader("Administration", "Leadership access, accounts, and House placement.")}
+      ${renderPageHeader("Administration", "")}
       ${renderCalendarAccessPlanning()}
       ${renderSuperAdminTools()}
     </div>
@@ -1013,13 +1003,11 @@ function renderSchoolCalendar() {
     <section class="calendar-section" aria-labelledby="school-calendar-title">
       <div class="calendar-heading">
         <div>
-          <span class="eyebrow">Dalton daily reference</span>
-          <h2 id="school-calendar-title">LAB, Level-Up & House calendar</h2>
-          <p>${getCalendarRoleLabel()}</p>
+          <h2 id="school-calendar-title">School calendar</h2>
         </div>
         ${canOpenCalendarEventCreator() ? '<button class="calendar-create-trigger" type="button" data-action="open-calendar-create"><span aria-hidden="true">＋</span>Create event</button>' : ""}
         <div class="calendar-toolbar">
-          ${activeUser.type === "teacher" ? `<label>View<select id="calendar-grade-filter"><option value="all">All grades</option>${[6, 7, 8, 9, 10, 11, 12].map((grade) => `<option value="${grade}" ${calendarTeacherGrade === String(grade) ? "selected" : ""}>Grade ${grade}</option>`).join("")}</select></label>` : ""}
+          ${activeUser.type === "teacher" ? `<label><span class="sr-only">Calendar grade</span><select id="calendar-grade-filter"><option value="all">All grades</option>${[6, 7, 8, 9, 10, 11, 12].map((grade) => `<option value="${grade}" ${calendarTeacherGrade === String(grade) ? "selected" : ""}>Grade ${grade}</option>`).join("")}</select></label>` : ""}
           <div class="calendar-week-controls"><button type="button" data-action="calendar-prev" aria-label="Previous week">‹</button><button type="button" data-action="calendar-today">Today</button><button type="button" data-action="calendar-next" aria-label="Next week">›</button></div>
         </div>
       </div>
@@ -1164,7 +1152,6 @@ function renderStudentRanking() {
     dateTo: rankingDateTo
   });
   const visibleStudents = rankingExpanded ? ranking : ranking.slice(0, 20);
-  const filterLabel = rankingValueFilter === "all" ? "All 7Cs" : getValue(rankingValueFilter).name;
 
   return `
     <section class="panel student-ranking-panel" aria-labelledby="student-ranking-title">
@@ -1236,7 +1223,6 @@ function renderStudentRanking() {
           </tbody>
         </table>
       </div>
-      <p class="ranking-caption">${filterLabel}${rankingDateFrom || rankingDateTo ? `, published ${rankingDateFrom ? `from ${formatDateOnly(rankingDateFrom)}` : "from the beginning"} ${rankingDateTo ? `to ${formatDateOnly(rankingDateTo)}` : "onward"}` : ", all publication dates"}.</p>
     </section>
   `;
 }
@@ -1250,7 +1236,7 @@ function renderDashboard() {
     const labs = (state.leadershipAssignments?.labs ?? []).filter((lab) => lab.leaderIds.includes(activeStudent.id));
     return `
       <div class="page student-dashboard">
-        ${renderPageHeader(`Welcome, ${escapeHtml(activeStudent.name)}`, `Grade ${activeStudent.grade} · ${house.name}`)}
+        ${renderPageHeader(`Welcome, ${escapeHtml(activeStudent.name)}`, `Grade ${activeStudent.grade}`)}
         <section class="student-calendar-identity panel" style="--house-color:${house.color}">
           <img src="${house.image}" alt="${house.name} logo" />
           <div><span>Your house</span><h2>${house.name}</h2><p>${totals[house.id].toLocaleString()} house points</p></div>
@@ -1281,7 +1267,6 @@ function renderDashboard() {
           <div class="panel-heading">
             <div>
               <h2 id="house-points-title">House points</h2>
-              <p>Current leaderboard</p>
             </div>
           </div>
 
@@ -1400,7 +1385,6 @@ function renderSendSummary(student, selectedValue, canSend) {
       <div class="summary-house">
         <img src="${house.image}" alt="${house.name} emblem" />
         <div>
-          <span>Selected student</span>
           <h2>${student.name}</h2>
           <p>Grade ${student.grade} · ${house.name}</p>
         </div>
@@ -1415,7 +1399,6 @@ function renderSendSummary(student, selectedValue, canSend) {
       </div>
 
       <dl>
-        <div><dt>Teacher</dt><dd>${activeTeacher.name}</dd></div>
         <div><dt>HCAS 7C</dt><dd>${selectedValue ? selectedValue.name : "Choose one"}</dd></div>
         <div><dt>Points</dt><dd>${selectedPoints ? `+${selectedPoints}` : "Choose one"}</dd></div>
         <div class="summary-comment-row">
@@ -1445,7 +1428,7 @@ function renderSend() {
 
   return `
     <div class="page">
-      ${renderPageHeader("Send coin", "Choose a 7C, points, one or more students, and an optional comment.")}
+      ${renderPageHeader("Send coin", "")}
 
       ${lastConfirmation ? renderConfirmation(lastConfirmation) : ""}
 
@@ -1500,7 +1483,6 @@ function renderSend() {
               <span id="send-student-count" role="status">${formatStudentCount(filteredStudents.length)} available · ${sendStudentIds.length} selected</span>
             </div>
             <div id="send-student-results">${renderSendStudentResults(filteredStudents)}</div>
-            <p class="field-help">Selections are kept when you change filters.</p>
           </fieldset>
 
           <fieldset class="comment-choice">
@@ -1510,10 +1492,9 @@ function renderSend() {
               id="send-comment"
               maxlength="${MAX_COMMENT_LENGTH}"
               placeholder="Add a short note about this recognition"
-              aria-describedby="send-comment-help send-comment-count"
+              aria-describedby="send-comment-count"
             >${escapeHtml(sendComment)}</textarea>
             <div class="comment-meta">
-              <span id="send-comment-help">Saved with each recognition you send.</span>
               <span id="send-comment-count">${sendComment.length}/${MAX_COMMENT_LENGTH}</span>
             </div>
           </fieldset>
@@ -1531,7 +1512,6 @@ function renderSend() {
               <section class="send-summary send-summary-empty">
                 <div class="summary-house summary-house-empty">
                   <div>
-                    <span>Selected students</span>
                     <h2>No student selected</h2>
                     <p>Choose one or more students to continue.</p>
                   </div>
@@ -1821,7 +1801,6 @@ function renderConcernStudentSelector() {
         }).join("")}
       </div>
       ${renderStudentFilterEmptyState(context, visibleIds.size > 0)}
-      <p class="field-help">Selections are kept when you change filters.</p>
     </div>
   `;
 }
@@ -1896,7 +1875,7 @@ function renderBehaviorStrategyPicker(tier = "") {
 function renderBehaviorConcern() {
   return `
     <div class="page concern-page">
-      ${renderPageHeader("Behavior concern", "Record a concern using the HCAS Student Behavior Code.")}
+      ${renderPageHeader("Behavior concern", "")}
       ${renderConcernConfirmation()}
 
       <form id="behavior-concern-form" class="panel concern-form">
@@ -2020,7 +1999,7 @@ function renderAcademicStrategyOptions(tier = 1, profileId = "") {
 function renderAcademicConcern() {
   return `
     <div class="page concern-page">
-      ${renderPageHeader("Academic concern", "Document an academic need and the support already provided.")}
+      ${renderPageHeader("Academic concern", "")}
       ${renderConcernConfirmation()}
 
       <form id="academic-concern-form" class="panel concern-form">
@@ -2111,7 +2090,7 @@ function renderSelConcernOptions(tier = 1) {
 function renderSelConcern() {
   return `
     <div class="page concern-page">
-      ${renderPageHeader("SEL concern", "Record a social-emotional observation for the student support team.")}
+      ${renderPageHeader("SEL concern", "")}
       ${renderConcernConfirmation()}
       <form id="sel-concern-form" class="panel concern-form">
         <div class="concern-source-note is-teacher-only">
@@ -2197,7 +2176,6 @@ function renderStudents() {
         <section class="panel student-list-panel" aria-labelledby="student-count">
           <div class="list-heading">
             <h2 id="student-count">${formatStudentCount(filteredStudents.length)}</h2>
-            <span>Click an emblem to view details</span>
           </div>
           <div class="student-crest-grid" id="student-list">
             ${renderStudentGallery()}
@@ -2677,7 +2655,6 @@ function renderTeacherActivity() {
           <div class="panel-heading">
             <div>
               <h2 id="teacher-breakdown-title">7C breakdown</h2>
-              <p>${activeTeacher.name}'s recognitions</p>
             </div>
             <span class="teacher-total">${totalPoints} pts</span>
           </div>
@@ -2717,7 +2694,6 @@ function renderTeacherActivity() {
           <div class="panel-heading">
             <div>
               <h2 id="teacher-history-title">Recognition history</h2>
-              <p>Newest first</p>
             </div>
             <span class="history-count">${awards.length}</span>
           </div>
@@ -2871,7 +2847,7 @@ function render() {
   teacherName.textContent = activeUser.name;
   document.querySelector("#mobile-staff-name").textContent = activeUser.name;
   teacherAvatar.alt = `${activeUser.name}'s Dalton Plan House Teams emblem`;
-  document.querySelector("#account-role").textContent = getCalendarRoleLabel().split(" · ")[0];
+  document.querySelector("#account-role").textContent = getAccountRoleLabel();
   renderTopbarHouseScores();
 
   document.querySelectorAll("[data-teacher-only]").forEach((element) => {

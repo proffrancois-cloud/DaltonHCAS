@@ -23,6 +23,7 @@ const publicEntries = [
   "manifest.webmanifest",
   "service-worker.js",
   "styles.css",
+  "interface.css",
   "assets"
 ];
 
