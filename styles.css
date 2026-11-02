@@ -4809,3 +4809,23 @@ body.is-student-session .sidebar-account { margin-top: auto; }
   .smart-goal-heading, .notification-panel li { flex-direction: column; }
   .notification-actions { display: flex; flex-wrap: wrap; }
 }
+/* Support follow-ups stay readable on a phone without widening the page. */
+.notification-panel .notification-actions { display:flex; flex-wrap:wrap; gap:.55rem; align-items:center; min-width:0; }
+.notification-panel .notification-actions button { white-space:normal; text-align:left; }
+.notification-panel li > div { min-width:0; overflow-wrap:anywhere; }
+.concern-followup,.goal-reflection { padding:1rem; margin:.8rem 0; border:1px solid #d7c176; border-radius:12px; background:#fffdf5; }
+.goal-reflection textarea { width:100%; }
+.check-in-row { display:flex; align-items:end; gap:.6rem; margin:.6rem 0; }
+.check-in-row label { flex:1; min-width:0; }
+.phone-notifications { margin:1rem 0; padding:1rem; border:1px solid #dce3eb; border-radius:12px; }
+.phone-notifications p { line-height:1.6; }
+.mobile-staff-account span:first-child { max-width:70px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.support-section textarea,.support-section select,.support-section input { max-width:100%; box-sizing:border-box; }
+[id^="goal-"],[id^="concern-"],[id^="reflection-"] { scroll-margin-top:7rem; }
+@media(max-width:650px) {
+  .notification-panel li { display:flex; flex-direction:column; align-items:stretch; }
+  .notification-panel .notification-actions { flex-direction:column; align-items:stretch; }
+  .smart-goal-heading,.record-section-heading { flex-wrap:wrap; gap:.5rem; }
+  .check-in-row { flex-wrap:wrap; }
+  .support-section { min-width:0; }
+}

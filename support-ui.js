@@ -1,4 +1,5 @@
 import { SMART_FIELDS, isSupervisor } from "./support-rules.js";
+import { goalFollowup, scheduleCreator } from "./followup-ui.js";
 
 export function renderIepHeart(state, actor, student, esc) {
   if (actor?.type !== "teacher" || !(state.iepDocuments ?? []).some(doc => doc.studentId === student.id)) return "";
@@ -24,7 +25,8 @@ export function renderSupportProfile(state, actor, student, esc, { dashboard = f
         <div class="smart-goal-heading"><div><span class="goal-origin">${goal.origin === "student" ? "Student-created goal" : "Supervisor support plan"}</span><h4>${esc(goal.title)}</h4></div><span class="goal-status ${goal.status === "achieved" ? "is-achieved" : ""}">${statusLabel[goal.status] ?? esc(goal.status)}</span></div>
         <p class="goal-meta">Review date: <time>${esc(goal.dueDate)}</time> · Published ${esc(new Date(goal.createdAt).toLocaleDateString("en-GB"))}</p>
         ${goal.previousGoalId ? `<p class="goal-meta">Follow-up to an earlier goal · <a href="#goal-${esc(goal.previousGoalId)}">View previous goal</a></p>` : ""}
-        ${actor.type === "teacher" && goal.sourceConcernId ? `<p class="goal-meta">Linked concern: ${esc(concerns.find(item => item.id === goal.sourceConcernId)?.title ?? goal.sourceConcernId)}</p>` : ""}
+        ${actor.type === "teacher" && goal.sourceConcernId ? `<p class="goal-meta"><button type="button" class="text-button" data-action="open-support-record" data-student-id="${esc(student.id)}" data-record-id="concern-${esc(goal.sourceConcernId)}">Linked concern: ${esc(concerns.find(item => item.id === goal.sourceConcernId)?.title ?? goal.sourceConcernId)}</button></p>` : ""}
+        ${goalFollowup(state, actor, goal, esc)}
         <details ${dashboard ? "" : "open"}><summary>SMART rubric & responses</summary>
           ${Object.entries(SMART_FIELDS).map(([key, rubric]) => {
             const field = goal.fields[key], editable = goal.status === "active" && (supervisor || (own && field.studentCanEdit));
@@ -40,17 +42,10 @@ export function renderSupportProfile(state, actor, student, esc, { dashboard = f
       </article>`).join("")}
       ${(supervisor || own) && !dashboard ? `<details class="new-goal"><summary>${own ? "Create your own SMART goal" : "Add a supervisor SMART plan"}</summary>
         <form data-support-form="goal-add" data-student-id="${esc(student.id)}"><input type="hidden" name="previousGoalId" value="" /><label>Goal title<input name="title" maxlength="200" required /></label>
-        ${supervisor ? `<label>Related concern <small>Optional</small><select name="sourceConcernId"><option value="">No related concern</option>${concerns.map(item => `<option value="${esc(item.id)}">${item.type}: ${esc(item.title)}</option>`).join("")}</select></label>` : ""}
+        ${supervisor ? `<label>Concern type · optional<select name="sourceConcernType" data-goal-concern-type><option value="">Independent goal</option><option value="behavior">Behavior</option><option value="academic">Academic</option><option value="sel">SEL</option></select></label><label>Related concern<select name="sourceConcernId" data-goal-concern-id><option value="">Select a concern type first</option></select></label>` : ""}
         ${Object.entries(SMART_FIELDS).map(([key, rubric]) => `<label>${key.toUpperCase()} · ${rubric.title}<small>${rubric.definition}</small><textarea name="${key}" rows="2" maxlength="4000" ${own ? "required" : ""}></textarea></label>${supervisor ? `<label class="checkbox-label"><input type="checkbox" name="studentEditableFields" value="${key}" /> Allow student to complete this field once</label>` : ""}`).join("")}
-        <label>Review date<input type="date" name="dueDate" required /></label><button class="primary-button" type="submit">Publish SMART goal</button><p class="support-error" role="alert"></p></form></details>` : ""}
+        <label>Final review date<input type="date" name="dueDate" required /></label>${scheduleCreator(state, actor, esc)}<button class="primary-button" type="submit">Publish SMART goal</button><p class="support-error" role="alert"></p></form></details>` : ""}
     </section>
     ${own && !dashboard ? `<section class="profile-record-section support-section"><h3>Your trusted adult</h3><p>Choose a staff member you prefer to talk to. You can change this at any time.</p><form data-support-form="trusted-adult"><label>Adult of reference<select name="teacherId"><option value="">No preference</option>${state.teachers.map(teacher => `<option value="${esc(teacher.id)}" ${student.trustedAdultId === teacher.id ? "selected" : ""}>${esc(teacher.name)}</option>`).join("")}</select></label><button class="secondary-button" type="submit">Save preference</button><p class="support-error" role="alert"></p></form><button type="button" class="urgent-support-button" data-action="urgent-support">URGENT - Need support</button><p class="field-help">This alerts supervising staff and your preferred adult in their dashboard. If you need immediate help, speak directly to an adult now.</p></section>` : ""}
   `;
-}
-
-export function renderSupportNotifications(state, actor, esc) {
-  const all = [...(state.notifications ?? [])].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  const unread = all.filter(item => !item.readBy?.[actor.id]);
-  const labels = { "repeated-concern": "Three matching concerns recorded", "smart-goal-request": "SMART support plan requested", "goal-due": "SMART goal review is due", "urgent-support": "URGENT - Need support" };
-  return `<section class="panel support-section notification-panel"><div class="record-section-heading"><h2>Notifications ${unread.length ? `<b class="points-notification" aria-label="${unread.length} unread notifications">${unread.length}</b>` : ""}</h2><span>${unread.length ? "Unread" : "All caught up"}</span></div>${all.length ? `<ul>${all.map(item => `<li class="${item.readBy?.[actor.id] ? "is-read" : "is-unread"}"><div><strong>${esc(labels[item.kind] ?? "School update")}</strong><p>${esc(state.students.find(s => s.id === item.studentId)?.name ?? "Student")}${item.issue ? ` · ${esc(item.issue)}` : ""}</p><time>${esc(new Date(item.createdAt).toLocaleString("en-GB", { timeZone: "Asia/Taipei" }))}</time></div><div class="notification-actions"><button type="button" class="text-button" data-action="open-support-profile" data-student-id="${esc(item.studentId)}">View profile</button>${!item.readBy?.[actor.id] ? `<button type="button" class="secondary-button" data-action="read-support-notification" data-notification-key="${esc(item.key)}">Mark as read</button>` : '<small>Read</small>'}</div></li>`).join("")}</ul>` : '<p class="muted-cell">No notifications yet.</p>'}</section>`;
 }

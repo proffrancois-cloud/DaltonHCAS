@@ -22,6 +22,7 @@ function storeSession(value) {
   else sessionStorage.removeItem(SESSION_KEY);
 }
 export async function cloudLogin(username, password) {
+  if (session?.access_token) await (await import("./push-client.js")).disablePhonePush().catch(() => {});
   const normalized = String(username).trim().toLowerCase();
   if (!/^[a-z0-9]+$/.test(normalized)) throw new Error("Enter your account username");
   const result = await authRequest("token?grant_type=password", { email: `${normalized}@accounts.daltonhcas.invalid`, password });
@@ -62,6 +63,7 @@ export async function cloudChangePassword(password) {
   return cloudLogin(result.user.username, password);
 }
 export async function cloudLogout() {
+  await (await import("./push-client.js")).disablePhonePush().catch(() => {});
   const token = session?.access_token;
   storeSession(null);
   if (token) await fetch(`${config.url}/auth/v1/logout`, { method: "POST", headers: { apikey: config.key, Authorization: `Bearer ${token}` } }).catch(() => {});

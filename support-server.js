@@ -1,5 +1,7 @@
 import * as data from "./data.js";
 import * as support from "./support-rules.js";
+import * as followup from "./followup-rules.js";
+import { validateConcernTier } from "./tier-rules.js";
 
 export function actorForAccount(state, accountId) {
   const teacher = state.teachers.find(item => item.id === accountId);
@@ -11,16 +13,17 @@ export function actorForAccount(state, accountId) {
 export function synchronizeAlerts(state, today) {
   const concerns = ["behavior", "academic", "sel"].flatMap(type =>
     (state[`${type}Concerns`] ?? []).map(item => ({ ...item, type })));
-  const generated = support.collectSupportAlerts({ concerns, goals: state.smartGoals ?? [], staff: state.teachers, today });
-  const notifications = [...(state.notifications ?? [])];
+  const generated = [...support.collectSupportAlerts({ concerns, goals: [], staff: state.teachers, today }), ...followup.followupAlerts(state, today)];
+  const currentKeys = new Set(generated.map(n => n.key));
+  const notifications = (state.notifications ?? []).map(n => ({ ...n, id: n.id ?? crypto.randomUUID(), ...(["goal-check-in", "goal-final-review", "goal-due"].includes(n.kind) ? { cancelled: !currentKeys.has(n.key) } : {}) }));
   const known = new Set(notifications.map(item => item.key));
-  for (const alert of generated) if (!known.has(alert.key)) { notifications.push({ ...alert, readBy: {} }); known.add(alert.key); }
+  for (const alert of generated) if (!known.has(alert.key)) { notifications.push({ ...alert, id: crypto.randomUUID(), readBy: {} }); known.add(alert.key); }
   return { ...state, notifications };
 }
 
 export function visibleState(state, actor) {
   const notifications = (state.notifications ?? []).filter(item => item.recipientIds.includes(actor.id))
-    .map(item => ({ ...item, recipientIds: [actor.id], readBy: { [actor.id]: item.readBy?.[actor.id] ?? null } }));
+    .map(item => ({ ...item, recipientIds: actor.type === "teacher" ? item.recipientIds : [actor.id], readBy: { [actor.id]: item.readBy?.[actor.id] ?? null } }));
   if (actor.type === "teacher") return { ...state, notifications };
   const student = state.students.find(item => item.id === actor.id);
   const calendar = data.getCalendarEvents(state, { user: actor });
@@ -34,7 +37,7 @@ export function visibleState(state, actor) {
     })),
     academicConcerns: [], selConcerns: [], iepDocuments: [],
     selCheckIns: state.selCheckIns.filter(item => item.studentId === actor.id),
-    smartGoals: (state.smartGoals ?? []).filter(item => item.studentId === actor.id).map(item => ({ ...item, sourceConcernId: null })),
+    smartGoals: (state.smartGoals ?? []).filter(item => item.studentId === actor.id).map(item => ({ ...item, sourceConcernId: null, sourceConcernType: null })),
     houseTotals: data.getHouseTotals(state), notifications,
     leadershipAssignments: state.leadershipAssignments,
     customCalendarEvents: (state.customCalendarEvents ?? []).filter(base => calendar.some(item => item.id === base.id || item.id.startsWith(`${base.id}::`))),
@@ -64,8 +67,10 @@ export function applySchoolCommand(state, actor, action, p, now = Date.now()) {
     case "concern-add": {
       const fn = { behavior: data.addBehaviorConcern, academic: data.addAcademicConcern, sel: data.addSelConcern }[p.type];
       if (!fn) throw new Error("Unknown concern type");
+      validateConcernTier(p.type, p.input);
       const next = fn(state, { ...p.input, teacherId: actor.id }, now);
       next[`${p.type}Concerns`].at(-1).requestSmartGoal = Boolean(p.input.requestSmartGoal);
+      next[`${p.type}Concerns`].at(-1).notificationRecipientIds = [...new Set([...followup.supervisors(state), ...(p.input.notificationRecipientIds ?? [])])].filter(id => state.teachers.some(t => t.id === id));
       return next;
     }
     case "concern-update": return data.updateConcern(state, p.type, p.id, actor.id, p.changes, now);
@@ -85,21 +90,31 @@ export function applySchoolCommand(state, actor, action, p, now = Date.now()) {
     }
     case "goal-add": {
       if (!state.students.some(item => item.id === p.studentId)) throw new Error("Unknown student");
+      if (actor.type === "teacher" && p.sourceConcernType && !p.sourceConcernId) throw new Error("Select the existing concern for this plan");
       if (p.sourceConcernId && ![...state.behaviorConcerns, ...state.academicConcerns, ...state.selConcerns]
         .some(item => item.id === p.sourceConcernId && item.studentIds.includes(p.studentId))) throw new Error("Concern does not belong to this student");
       const previousGoal = p.previousGoalId ? (state.smartGoals ?? []).find(item => item.id === p.previousGoalId) : null;
       if (p.previousGoalId && !previousGoal) throw new Error("Previous goal not found");
-      const goal = support.createSmartGoal(actor, p, { id: crypto.randomUUID(), now: iso, previousGoal });
+      const linked = followup.allConcerns(state).find(c => c.id === p.sourceConcernId);
+      if (actor.type === "teacher" && p.sourceConcernId && p.sourceConcernType && linked.type !== p.sourceConcernType) throw new Error("Select a concern of the chosen type");
+      const base = support.createSmartGoal(actor, p, { id: crypto.randomUUID(), now: iso, previousGoal });
+      const goal = followup.goalSchedule(state, { ...base, sourceConcernType: base.sourceConcernId ? linked.type : null, deadlineRevision: 0 }, { checkIns: p.checkIns ?? [], responsibleTeacherId: actor.type === "teacher" ? p.responsibleTeacherId || actor.id : null }, iso);
       return { ...state, smartGoals: [...(state.smartGoals ?? []), goal] };
     }
     case "goal-field": case "goal-access": case "goal-close": {
       const goal = (state.smartGoals ?? []).find(item => item.id === p.id);
       if (!goal) throw new Error("Goal not found");
-      const updated = action === "goal-field" ? support.submitSmartField(actor, goal, p.field, p.text, { now: iso, dueDate: p.dueDate })
+      let updated = action === "goal-field" ? support.submitSmartField(actor, goal, p.field, p.text, { now: iso, dueDate: p.dueDate })
         : action === "goal-access" ? support.setStudentFieldAccess(actor, goal, p.field, p.canEdit, iso)
         : support.closeSmartGoal(actor, goal, p.status, p.note, iso);
+      if (updated.dueDate !== goal.dueDate) {
+        if ((goal.checkIns ?? []).some(c => !c.cancelledAt && c.date > updated.dueDate)) throw new Error("Cancel or move later check-ins before shortening the final review date");
+        updated = { ...updated, deadlineRevision: (goal.deadlineRevision ?? 0) + 1 };
+      }
       return { ...state, smartGoals: state.smartGoals.map(item => item.id === goal.id ? updated : item) };
     }
+    case "concern-response": case "goal-schedule": case "goal-reflection": case "reflection-reminder":
+      return followup.applyFollowupCommand(state, actor, action, p, iso);
     case "trusted-adult": {
       const student = state.students.find(item => item.id === actor.id);
       if (!student) throw new Error("Student account required");

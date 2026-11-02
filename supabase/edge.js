@@ -1,14 +1,29 @@
 import { createClient } from "npm:@supabase/supabase-js@2.95.3";
 import { actorForAccount, applySchoolCommand, synchronizeAlerts, visibleState } from "./support-server.js";
 import { validateIepPdf } from "./support-rules.js";
+import { pushAction, pushConfig, deliverPush } from "./push-server.js";
+import { taiwanToday as today } from "./followup-rules.js";
 
 const BOOTSTRAP_HASH = "__BOOTSTRAP_HASH__";
 const supabase = createClient(Deno.env.get("SUPABASE_URL"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
 const headers = { "Content-Type": "application/json", "Cache-Control": "no-store, private", "X-Content-Type-Options": "nosniff" };
 const json = (value, status = 200, cors = {}) => new Response(JSON.stringify(value), { status, headers: { ...headers, ...cors } });
-const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 const digest = async text => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))).map(b => b.toString(16).padStart(2, "0")).join("");
 const randomPassword = () => Array.from(crypto.getRandomValues(new Uint8Array(24))).map(b => b.toString(16).padStart(2, "0")).join("");
+function queuePush() { EdgeRuntime.waitUntil(deliverPush(supabase).catch(() => console.error("Push delivery job failed; scheduled retry will follow"))); }
+async function scheduledFollowups() {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { data: row, error } = await supabase.from("hcas_state").select("*").eq("id", 1).single();
+    if (error) throw error;
+    const next = synchronizeAlerts(row.payload, today());
+    if (JSON.stringify(next) === JSON.stringify(row.payload)) break;
+    const saved = await supabase.from("hcas_state").update({ payload: next, revision: row.revision + 1, updated_at: new Date().toISOString() }).eq("id", 1).eq("revision", row.revision).select("revision");
+    if (saved.error) throw saved.error;
+    if (saved.data.length) break;
+    if (attempt === 4) throw new Error("Scheduled synchronization will retry next minute");
+  }
+  await deliverPush(supabase);
+}
 
 async function provisionAccount(account, reset = false) {
   const password = randomPassword();
@@ -62,6 +77,14 @@ Deno.serve(async request => {
     if (Number(request.headers.get("content-length") ?? 0) > 15_000_000) return json({ error: "File too large" }, 413, cors);
     const input = await request.json();
     if (input.action === "bootstrap") return json(await bootstrap(input), 200, cors);
+    if (input.action === "scheduled-followups") {
+      const token = request.headers.get("x-hcas-worker") ?? "";
+      if (token.length !== 64) return json({ error: "Access denied" }, 403, cors);
+      const config = await pushConfig(supabase);
+      if (await digest(token) !== await digest(config.worker_token)) return json({ error: "Access denied" }, 403, cors);
+      EdgeRuntime.waitUntil(scheduledFollowups().catch(() => console.error("Scheduled follow-up job failed")));
+      return json({ accepted: true }, 202, cors);
+    }
     const token = (request.headers.get("Authorization") ?? "").replace(/^Bearer /i, "");
     const { data: auth, error } = await supabase.auth.getUser(token);
     if (error || !auth.user) return json({ error: "Please log in again" }, 401, cors);
@@ -85,6 +108,11 @@ Deno.serve(async request => {
       if (!actor) return json({ error: "School access revoked" }, 403, cors);
       let next = synchronizeAlerts(row.payload, today());
       if (mapping.must_change_password) return json({ user: actor, mustChangePassword: true }, 200, cors);
+      if (["push-config", "push-subscribe", "push-unsubscribe"].includes(input.action)) {
+        const result = await pushAction(supabase, actor, input);
+        queuePush();
+        return json(result, 200, cors);
+      }
       if (input.action === "account-reset") {
         if (actor.type !== "teacher" || actor.role !== "super-admin") return json({ error: "Only a super admin can reset school passwords" }, 403, cors);
         const account = [...next.students, ...next.teachers].find(item => item.id === input.payload?.id);
@@ -127,6 +155,7 @@ Deno.serve(async request => {
       }
       const newAccountCredential = ["student-create", "teacher-create"].includes(input.action)
         ? await provisionAccount(input.action === "student-create" ? next.students.at(-1) : next.teachers.at(-1)) : null;
+      queuePush();
       return json({ user: actorForAccount(next, actor.id), state: visibleState(next, actor), mustChangePassword: false, ...(newAccountCredential ? { newAccountCredential } : {}) }, 200, cors);
     }
     return json({ error: "Another change was saved at the same time. Please try again." }, 409, cors);

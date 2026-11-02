@@ -59,7 +59,11 @@ import {
 } from "./data.js";
 import { cloudEnabled, cloudLogin, cloudCall, cloudChangePassword, cloudLogout, hasCloudSession } from "./cloud-client.js";
 import { SMART_FIELDS, isSupervisor } from "./support-rules.js";
-import { renderIepHeart, renderSupportProfile, renderSupportNotifications } from "./support-ui.js";
+import { renderIepHeart, renderSupportProfile } from "./support-ui.js";
+import { renderFollowupNotifications as renderSupportNotifications, responseHistory, checkInRow } from "./followup-ui.js";
+import { academicStrategies, behavioralStrategies, selOptions } from "./tier-rules.js";
+import { enablePhonePush, disablePhonePush, initializePhonePush } from "./push-client.js";
+let phonePushStatus = "";
 
 let pendingCloudCommand = null;
 let cloudSnapshot = null;
@@ -72,7 +76,7 @@ function stageCloud(action, payload, nextState) {
 const addAward = (s, studentId, valueId, teacherId, points, now, comment, editorIds) => stageCloud("award-add", { studentId, valueId, points, comment, editorIds }, localAddAward(s, studentId, valueId, teacherId, points, now, comment, editorIds));
 const removeAward = (s, id, teacherId) => stageCloud("award-remove", { id }, localRemoveAward(s, id, teacherId));
 const updateAward = (s, id, teacherId, changes) => stageCloud("award-update", { id, changes }, localUpdateAward(s, id, teacherId, changes));
-const stageConcern = (type, fn, s, input) => stageCloud("concern-add", { type, input: { ...input, requestSmartGoal: Boolean(document.querySelector('[name="requestSmartGoal"]:checked')) } }, fn(s, input));
+const stageConcern = (type, fn, s, input) => stageCloud("concern-add", { type, input: { ...input, requestSmartGoal: Boolean(document.querySelector('[name="requestSmartGoal"]:checked')), notificationRecipientIds: [...document.querySelectorAll('[name="notificationRecipientIds"]:checked')].map(el => el.value) } }, fn(s, input));
 const addBehaviorConcern = (s, input) => stageConcern("behavior", localAddBehaviorConcern, s, input);
 const addAcademicConcern = (s, input) => stageConcern("academic", localAddAcademicConcern, s, input);
 const addSelConcern = (s, input) => stageConcern("sel", localAddSelConcern, s, input);
@@ -189,11 +193,14 @@ async function commitState(nextState, message = "") {
 }
 
 function applyCloudResult(result) {
+  const previousAccount = activeUser?.id;
+  const neededPassword = mustChangePassword;
   activeUser = result.user;
   activeTeacher = activeUser?.type === "teacher" ? activeUser : null;
   mustChangePassword = Boolean(result.mustChangePassword);
   if (result.newAccountCredential) lastCreatedAccount = result.newAccountCredential;
   if (result.state) { state = result.state; cloudSnapshot = structuredClone(result.state); }
+  if (!mustChangePassword && (previousAccount !== activeUser?.id || neededPassword)) queueMicrotask(() => window.dispatchEvent(new Event("school-session-ready")));
 }
 
 async function openIepReader(documentId) {
@@ -217,7 +224,26 @@ async function openIepReader(documentId) {
 
 async function handleSupportClick(button) {
   const action = button.dataset.action;
-  if (action === "open-iep" || action === "read-iep-document") {
+  if (action === "enable-push" || action === "disable-push") {
+    phonePushStatus = "Updating notification permission…";
+    const status = document.querySelector("[data-push-status]");
+    if (status) status.textContent = phonePushStatus;
+    button.disabled = true;
+    try { phonePushStatus = action === "enable-push" ? await enablePhonePush() : await disablePhonePush(); } catch (error) { phonePushStatus = error.message; }
+    const currentStatus = document.querySelector("[data-push-status]");
+    if (currentStatus) currentStatus.textContent = phonePushStatus;
+    button.disabled = false;
+  } else if (action === "add-check-in") {
+    button.previousElementSibling.insertAdjacentHTML("beforeend", checkInRow());
+  } else if (action === "remove-check-in") {
+    button.closest("[data-check-in-row]").remove();
+  } else if (action === "concern-response") {
+    await runCloudAction("concern-response", { id: button.dataset.concernId, type: button.dataset.concernType, response: button.dataset.response, requestId: crypto.randomUUID() });
+  } else if (action === "reflection-reminder") {
+    if (await runCloudAction("reflection-reminder", { id: button.dataset.goalId })) showToast("Reflection reminder sent to the student.");
+  } else if (action === "open-support-record") {
+    openSupportRecord(button.dataset.studentId, button.dataset.recordId);
+  } else if (action === "open-iep" || action === "read-iep-document") {
     const docId = button.dataset.documentId ?? [...(state.iepDocuments ?? [])].reverse().find(item => item.studentId === button.dataset.studentId)?.id;
     if (docId) await openIepReader(docId);
   } else if (action === "read-support-notification") {
@@ -265,8 +291,11 @@ async function handleSupportSubmit(form) {
         studentId: form.dataset.studentId, title: formData.get("title"), dueDate: formData.get("dueDate"),
         fields: Object.fromEntries(Object.keys(SMART_FIELDS).map(key => [key, formData.get(key)])),
         studentEditableFields: formData.getAll("studentEditableFields"),
-        sourceConcernId: formData.get("sourceConcernId") || null, previousGoalId: formData.get("previousGoalId") || null
+        sourceConcernId: formData.get("sourceConcernId") || null, sourceConcernType: formData.get("sourceConcernType") || null, previousGoalId: formData.get("previousGoalId") || null,
+        responsibleTeacherId: formData.get("responsibleTeacherId"), checkIns: readCheckIns(form)
       } : type === "goal-field" ? { id: form.dataset.goalId, field: form.dataset.field, text: formData.get("text"), dueDate: formData.get("dueDate") || undefined }
+        : type === "goal-schedule" ? { id: form.dataset.goalId, responsibleTeacherId: formData.get("responsibleTeacherId"), checkIns: readCheckIns(form) }
+        : type === "goal-reflection" ? { id: form.dataset.goalId, text: formData.get("text") }
         : type === "goal-close" ? { id: form.dataset.goalId, status: formData.get("status"), note: formData.get("note") }
         : type === "account-reset" ? { id: formData.get("id") } : { teacherId: formData.get("teacherId") };
       result = await cloudCall(type, { payload });
@@ -276,6 +305,22 @@ async function handleSupportSubmit(form) {
     showToast("Saved to your school account.");
   } catch (error) { errorElement.textContent = error.message; }
   finally { cloudBusy = false; button.disabled = false; }
+}
+
+function readCheckIns(form) {
+  return [...form.querySelectorAll("[data-check-in-row]")].map(row => ({ ...(row.dataset.checkInId ? { id: row.dataset.checkInId } : {}), date: row.querySelector("input").value }));
+}
+function openSupportRecord(studentId, recordId = "") {
+  profileConcernFilters.behavior = profileConcernFilters.academic = profileConcernFilters.sel = "all";
+  setView("students", { studentId });
+  requestAnimationFrame(() => {
+    const target = document.getElementById(recordId);
+    if (!target) return;
+    let parent = target.parentElement;
+    while (parent) { if (parent.tagName === "DETAILS") parent.open = true; parent = parent.parentElement; }
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.tabIndex = -1; target.focus({ preventScroll: true });
+  });
 }
 
 async function runCloudAction(action, payload = {}) {
@@ -1800,12 +1845,12 @@ function renderBehaviorIssueOptions(level) {
     </label>`;
 }
 
-function renderBehaviorStrategyPicker() {
-  const behavioralGroups = BEHAVIOR_STRATEGY_GROUPS.filter((group) => group.id.includes("behavioral"));
+function renderBehaviorStrategyPicker(tier = "") {
+  const behavioralGroups = behavioralStrategies(tier);
   return `
     <details class="strategy-picker">
       <summary>
-        <span><strong>Behavioral strategy suggestions</strong><small>Choose any Tier 1, 2, or 3 behavioral support that was used.</small></span>
+        <span><strong>Behavioral strategy suggestions</strong><small>${tier ? `Tier ${tier} support that was used.` : "Select a behavior tier first."}</small></span>
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m8 10 4 4 4-4" /></svg>
       </summary>
       <div class="strategy-picker-content">
@@ -1932,8 +1977,9 @@ function renderBehaviorConcern() {
   `;
 }
 
-function renderAcademicIssueOptions() {
+function renderAcademicIssueOptions(selectedTier = 1) {
   return Object.entries(ACADEMIC_CONCERN_EXAMPLES)
+    .filter(([tier]) => Number(tier) === Number(selectedTier))
     .map(
       ([tier, issues]) => `
         <optgroup label="Tier ${tier} academic concerns">
@@ -1945,10 +1991,7 @@ function renderAcademicIssueOptions() {
 }
 
 function getAcademicStrategyOptions(tier, profileId) {
-  const profile = ACADEMIC_PROFILES.find((item) => item.id === profileId);
-  if (profile) return profile.strategies;
-  if (Number(tier) === 1) return TIER_ONE_INSTRUCTIONAL_STRATEGIES;
-  return TIER_TWO_ACADEMIC_INTERVENTIONS;
+  return academicStrategies(tier, profileId);
 }
 
 function renderAcademicStrategyOptions(tier = 1, profileId = "") {
@@ -1988,7 +2031,7 @@ function renderAcademicConcern() {
               ${renderAcademicIssueOptions()}
             </select>
           </label>
-          <p class="field-help" id="academic-multi-help">Choose one or more items. The tier filter keeps the relevant examples enabled.</p>
+          <p class="field-help" id="academic-multi-help">Choose one or more items from the selected tier.</p>
           <label class="full-field">Other academic issue <small>Optional</small><textarea name="otherIssue" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3" placeholder="Write the concern in your own words if it is not listed"></textarea></label>
           <label class="full-field">Description<textarea name="description" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" placeholder="Include observations, evidence, or a pattern you have noticed" required></textarea></label>
         </fieldset>
@@ -2032,8 +2075,8 @@ function renderAcademicConcern() {
   `;
 }
 
-function renderSelConcernOptions() {
-  return SEL_CONCERN_OPTIONS.map((option) => `
+function renderSelConcernOptions(tier = 1) {
+  return selOptions(tier).map((option) => `
     <article class="sel-concern-option ${option.urgent ? "is-urgent" : ""}">
       <label>
         <input type="checkbox" name="concernIds" value="${option.id}" />
@@ -2077,6 +2120,7 @@ function renderSelConcern() {
         <fieldset class="concern-section">
           <legend><span>3</span> Social-emotional concerns</legend>
           <p class="field-help">Select every item that applies. These labels support observation and referral; they are not diagnoses.</p>
+          <label>MTSS tier<select id="sel-tier" name="tier"><option value="1">Tier 1</option><option value="2">Tier 2</option><option value="3">Tier 3</option></select></label>
           <div class="sel-concern-grid">${renderSelConcernOptions()}</div>
           <label class="full-field">Other concern details <small>Required only when Other is selected</small><textarea name="otherConcern" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3"></textarea></label>
         </fieldset>
@@ -2324,6 +2368,7 @@ function renderBehaviorConcernsTable(student) {
                           <p class="record-description">${escapeHtml(concern.description)}</p>
                           <details class="record-details">
                             <summary>View teacher details</summary>
+                            ${responseHistory(state, activeUser, concern, escapeHtml)}
                             <div>
                               <h4>Code issues</h4>
                               <ul>${issues.map((issue) => `<li><span class="level-badge level-${issue.level === 1 ? "one" : "two"}">Tier ${issue.level}</span> ${issue.title}</li>`).join("")}${concern.otherIssue ? `<li>Other: ${escapeHtml(concern.otherIssue)}</li>` : ""}</ul>
@@ -2391,6 +2436,7 @@ function renderAcademicConcernsTable(student) {
                           <p class="record-description">${escapeHtml(concern.description)}</p>
                           <details class="record-details">
                             <summary>View academic details</summary>
+                            ${responseHistory(state, activeUser, concern, escapeHtml)}
                             <div>
                               <p><span class="level-badge academic-tier">Tier ${concern.tier}</span>${profile ? ` ${profile.name}` : " General academic concern"}</p>
                               ${(concern.issueIds ?? []).length || concern.otherIssue ? `<h4>Academic issues</h4><ul>${(concern.issueIds ?? []).map((issue) => `<li>${escapeHtml(issue)}</li>`).join("")}${concern.otherIssue ? `<li>${escapeHtml(concern.otherIssue)}</li>` : ""}</ul>` : ""}
@@ -2451,6 +2497,7 @@ function renderSelConcernsTable(student) {
                     <p class="record-description">${escapeHtml(concern.description)}</p>
                     <details class="record-details">
                       <summary>View SEL details</summary>
+                      ${responseHistory(state, activeUser, concern, escapeHtml)}
                       <div>
                         <h4>Observed concerns</h4>
                         <ul>${options.map((option) => `<li><span class="level-badge academic-tier">Tier ${option.tier}</span> ${escapeHtml(option.title)}${option.urgent ? " · immediate support review" : ""}</li>`).join("")}${concern.otherConcern ? `<li>${escapeHtml(concern.otherConcern)}</li>` : ""}</ul>
@@ -2763,18 +2810,16 @@ function updateAcademicFormOptions() {
   if (!tierSelect || !profileSelect || !issueSelect || !strategySelect || !heading) return;
 
   const tier = Number(tierSelect.value);
+  if (tier !== 3) profileSelect.value = "";
+  profileSelect.closest("label").hidden = tier !== 3;
   const profileId = profileSelect.value;
-  issueSelect.querySelectorAll("option[data-tier]").forEach((option) => {
-    const enabled = Number(option.dataset.tier) === tier;
-    option.disabled = !enabled;
-    if (!enabled) option.selected = false;
-  });
+  issueSelect.innerHTML = renderAcademicIssueOptions(tier);
 
   const profile = ACADEMIC_PROFILES.find((item) => item.id === profileId);
   strategySelect.innerHTML = renderAcademicStrategyOptions(tier, profileId);
   heading.innerHTML = profile
     ? `<strong>Five recommended intervention strategies</strong><span>${profile.name}</span>`
-    : `<strong>${tier === 1 ? "Tier 1 instructional strategies" : "Tier 2 academic interventions"}</strong><span>Select all that were used.</span>`;
+    : `<strong>Tier ${tier} ${tier === 1 ? "instructional strategies" : "academic interventions"}</strong><span>Select all that were used.</span>`;
 }
 
 function toggleConditionalField(toggleId, fieldId) {
@@ -2807,6 +2852,7 @@ function render() {
     window.history.replaceState(null, "", "#dashboard");
   }
   teacherName.textContent = activeUser.name;
+  document.querySelector("#mobile-staff-name").textContent = activeUser.name;
   teacherAvatar.alt = `${activeUser.name}'s Dalton Plan House Teams emblem`;
   document.querySelector("#account-role").textContent = getCalendarRoleLabel().split(" · ")[0];
   renderTopbarHouseScores();
@@ -2846,8 +2892,10 @@ function render() {
   else viewRoot.innerHTML = renderDashboard();
 
   viewRoot.insertAdjacentHTML("beforeend", renderRecordEditModal());
+  const pushStatus = viewRoot.querySelector("[data-push-status]");
+  if (pushStatus) pushStatus.textContent = phonePushStatus;
   if (cloudEnabled && ["behavior-concern", "academic-concern", "sel-concern"].includes(activeView)) {
-    viewRoot.querySelector(".form-submit-bar")?.insertAdjacentHTML("beforebegin", '<label class="checkbox-label plan-request-toggle"><input type="checkbox" name="requestSmartGoal" /> Notify supervising staff: a SMART support plan may help this student</label>');
+    viewRoot.querySelector(".form-submit-bar")?.insertAdjacentHTML("beforebegin", `<fieldset class="concern-section"><legend>Notify staff for follow-up</legend><p>All supervising teachers and super admins are included automatically. Add other staff below.</p><details><summary>Additional recipients</summary>${state.teachers.filter(t => !isSupervisor({ ...t, type: "teacher" })).map(t => `<label class="checkbox-label"><input type="checkbox" name="notificationRecipientIds" value="${escapeHtml(t.id)}" />${escapeHtml(t.name)}</label>`).join("")}</details></fieldset><label class="checkbox-label plan-request-toggle"><input type="checkbox" name="requestSmartGoal" /> Notify supervising staff: a SMART support plan may help this student</label>`);
   }
 
   window.requestAnimationFrame(() => {
@@ -3256,6 +3304,8 @@ viewRoot.addEventListener("change", (event) => {
   } else if (event.target.matches("#behavior-tier")) {
     const issueContainer = document.querySelector("#behavior-tier-issues");
     if (issueContainer) issueContainer.innerHTML = renderBehaviorIssueOptions(event.target.value);
+    const strategyPicker = document.querySelector(".strategy-picker");
+    if (strategyPicker) strategyPicker.outerHTML = renderBehaviorStrategyPicker(event.target.value);
     updateBehaviorCodePreview();
   } else if (
     event.target.matches('#behavior-concern-form [name="studentIds"]') ||
@@ -3272,6 +3322,13 @@ viewRoot.addEventListener("change", (event) => {
     refreshConcernStudentSelector();
   } else if (event.target.matches("#behavior-other-strategy-toggle")) {
     toggleConditionalField("behavior-other-strategy-toggle", "behavior-other-strategy-field");
+  } else if (event.target.matches("[data-goal-concern-type]")) {
+    const form = event.target.closest("form"), type = event.target.value;
+    const select = form.querySelector("[data-goal-concern-id]");
+    select.required = Boolean(type);
+    select.innerHTML = '<option value="">Select a concern</option>' + (state[`${type}Concerns`] ?? []).filter(c => c.studentIds.includes(form.dataset.studentId)).map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.title)} · ${escapeHtml(c.incidentDate)}</option>`).join("");
+  } else if (event.target.matches("#sel-tier")) {
+    document.querySelector(".sel-concern-grid").innerHTML = renderSelConcernOptions(event.target.value);
   } else if (event.target.matches("#academic-profile")) {
     if (event.target.value) document.querySelector("#academic-tier").value = "3";
     updateAcademicFormOptions();
@@ -3604,6 +3661,7 @@ viewRoot.addEventListener("submit", async (event) => {
     try {
       const attachment = await readConcernAttachment(formData);
       state = addSelConcern(state, {
+        tier: Number(formData.get("tier")),
         studentIds: formData.getAll("studentIds"),
         concernIds: formData.getAll("concernIds"),
         otherConcern: formData.get("otherConcern"),
@@ -3685,16 +3743,7 @@ if (cloudEnabled) {
   }, 30_000);
 }
 
-const isPrivateVercelDeployment = cloudEnabled;
-
-if ("serviceWorker" in navigator && window.isSecureContext && !isPrivateVercelDeployment) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./service-worker.js").catch((error) => {
-      console.warn("DaltonHCAS could not enable offline access.", error);
-    });
-  });
-} else if ("serviceWorker" in navigator && isPrivateVercelDeployment) {
-  navigator.serviceWorker.getRegistrations().then((registrations) => {
-    registrations.forEach((registration) => registration.unregister());
-  });
-}
+initializePhonePush(() => activeUser, noticeId => {
+  const n = state.notifications?.find(item => item.id === noticeId);
+  if (n && activeUser && !mustChangePassword) openSupportRecord(n.studentId, n.goalId ? `${n.kind.includes("reflection") || n.kind === "goal-final-review" ? "reflection" : "goal"}-${n.goalId}` : n.concernId || n.concernIds?.length ? `concern-${n.concernId ?? n.concernIds.at(-1)}` : "");
+});
