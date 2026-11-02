@@ -40,6 +40,7 @@ export function visibleState(state, actor) {
     smartGoals: (state.smartGoals ?? []).filter(item => item.studentId === actor.id).map(item => ({ ...item, sourceConcernId: null, sourceConcernType: null })),
     houseTotals: data.getHouseTotals(state), notifications,
     leadershipAssignments: state.leadershipAssignments,
+    houseMeetingLocations: state.houseMeetingLocations,
     customCalendarEvents: (state.customCalendarEvents ?? []).filter(base => calendar.some(item => item.id === base.id || item.id.startsWith(`${base.id}::`))),
     calendarEventDetails: Object.fromEntries(calendar.map(item => [item.id, {
       startTime: item.startTime, endTime: item.endTime, location: item.location,

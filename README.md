@@ -68,4 +68,8 @@ The initial provisioning endpoint is disabled after setup. Bootstrap tokens are 
 
 ## Deployment note
 
+School leadership assignments are held in the private shared state. `leadership-import.js` applies a reviewed import without replacing accounts or recognition/concern history. House Captains and LAB leaders keep scoped event editing. Teacher House leadership does not grant access to edit unrelated student records. Level-Up staff create/edit only their assigned grades’ Level-Up events.
+
+House meeting locations are defaults; event-specific locations override them. Imported S1 LAB assignments are date-bounded. Teachers see the available LAB activities, while students see specific LABs only when assigned as a leader/member; otherwise they retain their existing generic LAB slot. Grade 11/12 leaders can see their named LAB even when the participant grade range is lower. Their grade timetable remains visible. House Captains have their Wednesday meeting on scheduled LAB Wednesdays. Level-Up calendar cards are separated by grade so one grade’s teacher cannot overwrite another grade’s instructions; earlier shared instructions remain available as the initial fallback.
+
 GitHub Pages remains a fictional demonstration. Vercel is the private school app and retains its existing preview password in addition to individual school logins. The school deployment uses server-side account checks, private storage, shared persistence, and audit events. Enabled devices receive generic Web Push attempts; no email or SMS is sent. The existing instruction to approach an adult directly for immediate help remains in place.

@@ -46,6 +46,8 @@ import {
   getStudentTotal,
   getTeacherAwards,
   getTeacherPermissions,
+  getTeacherLevelUpGrades,
+  isHouseLeaderTeacher,
   getTeacherStats,
   migrateStoredState,
   removeAward as localRemoveAward,
@@ -461,7 +463,7 @@ function canAccessAdministration() {
   const isLabLeader = (state.leadershipAssignments?.labs ?? []).some((lab) =>
     lab.teacherIds?.includes(teacher?.id)
   );
-  return teacher?.role === "house-leader" || teacher?.role === "super-admin" || isLabLeader;
+  return isHouseLeaderTeacher(teacher) || teacher?.role === "super-admin" || isLabLeader || getTeacherLevelUpGrades(state, teacher?.id).length > 0;
 }
 
 function escapeHtml(value) {
@@ -731,16 +733,14 @@ function getCalendarRoleLabel() {
     const teacher = activeUser?.type === "teacher" ? getTeacher(activeUser.id) : null;
     if (teacher?.role === "super-admin") return "Super admin · Full school calendar";
     if (teacher?.role === "teacher-supervising") return "Teacher supervising · Full school calendar";
-    if (teacher?.role === "house-leader") {
+    if (isHouseLeaderTeacher(teacher)) {
       return `Leader teacher · ${getHouse(teacher.houseId)?.name ?? "House"} · Full school calendar`;
     }
     return "Regular teacher · Full school calendar";
   }
   const isHouseLeader = (state.leadershipAssignments?.houseLeaders?.[student.houseId] ?? []).includes(student.id);
   const labs = (state.leadershipAssignments?.labs ?? []).filter((lab) => lab.leaderIds.includes(student.id));
-  if (isHouseLeader && labs.length) return `House leader · Lab leader · Grade ${student.grade}`;
-  if (isHouseLeader) return `House leader · Grade ${student.grade}`;
-  if (labs.length) return `Lab leader · Grade ${student.grade}`;
+  if (isHouseLeader || labs.length) return `House Captain/Lab Leader · Grade ${student.grade}`;
   return `Student · Grade ${student.grade}`;
 }
 
@@ -789,6 +789,8 @@ function renderCalendarEventPanel(events) {
             <p>${formatDateOnly(event.date)} · ${formatClockTime(event.startTime)}–${formatClockTime(event.endTime)}${event.location ? ` · ${escapeHtml(event.location)}` : ""}</p>
           </div>
         </div>
+        ${event.teacherIds?.length ? `<p><strong>Teachers:</strong> ${event.teacherIds.map(id => escapeHtml(getTeacher(id)?.name ?? "")).filter(Boolean).join(", ")}</p>` : ""}
+        ${event.leaderIds?.length ? `<p><strong>House Captain/Lab Leader:</strong> ${event.leaderIds.map(id => escapeHtml(getStudent(id)?.name ?? "")).filter(Boolean).join(", ")}</p>` : ""}
         ${event.description ? `<p class="calendar-event-description">${escapeHtml(event.description)}</p>` : '<p class="calendar-event-description is-empty">No additional instructions have been shared yet.</p>'}
         <div class="calendar-resources">
           ${resourceUrl ? `<a href="${escapeHtml(resourceUrl)}" target="_blank" rel="noopener">Open shared resource</a>` : ""}
@@ -825,8 +827,9 @@ function renderCalendarAccessPlanning() {
       <section class="panel leadership-overview">
         <div class="panel-heading"><div><h2>Calendar access & planning</h2><p>Your leadership access</p></div></div>
         <div class="leadership-scope-list">
-          ${teacher.houseId ? `<span><strong>${getHouse(teacher.houseId).name}</strong><small>Create House events from the calendar header.</small></span>` : ""}
+          ${isHouseLeaderTeacher(teacher) && teacher.houseId ? `<span><strong>${getHouse(teacher.houseId).name}</strong><small>Meeting area: ${escapeHtml(state.houseMeetingLocations?.[teacher.houseId] ?? "Not assigned")} · Create House events from the calendar header.</small></span>` : ""}
           ${teacherLabs.map((lab) => `<span><strong>${escapeHtml(lab.name)}</strong><small>Create and edit this LAB’s events.</small></span>`).join("")}
+          ${getTeacherLevelUpGrades(state, teacher.id).map(grade=>`<span><strong>Grade ${grade} Level-Up</strong><small>Create and edit this grade’s Level-Up events.</small></span>`).join("")}
           ${!teacher.houseId && !teacherLabs.length ? "<p>No calendar leadership assignment is active.</p>" : ""}
         </div>
       </section>
@@ -834,11 +837,11 @@ function renderCalendarAccessPlanning() {
   }
   return `
     <details class="calendar-admin panel" open>
-      <summary><span>Calendar access & planning</span><small>Assign student House and LAB leaders</small></summary>
+      <summary><span>Calendar access & planning</span><small>Assign House Captain/Lab Leader access</small></summary>
       <div class="calendar-admin-grid">
         <section>
-          <h3>House leaders</h3>
-          <p>House leaders can update their own House event instructions and resources.</p>
+          <h3>House Captains</h3>
+          <p>House Captains can update their own House event instructions and resources.</p>
           <form id="house-leader-form" class="compact-admin-form">
             <label>House<select name="houseId" id="leader-house-select">${HOUSES.map((house) => `<option value="${house.id}">${house.name}</option>`).join("")}</select></label>
             <label>Student<select name="studentId" id="leader-student-select">${state.students.filter((student) => student.houseId === HOUSES[0].id).map((student) => `<option value="${student.id}">${escapeHtml(student.name)} · G${student.grade}</option>`).join("")}</select></label>
@@ -846,27 +849,28 @@ function renderCalendarAccessPlanning() {
           </form>
           <div class="leader-assignment-list">
             ${HOUSES.map((house) => `
-              <div><img src="${house.image}" alt="" /><span><strong>${house.name}</strong>${(houseLeaders[house.id] ?? []).map((id) => {
+              <div><img src="${house.image}" alt="" /><span><strong>${house.name}</strong><small>Meeting area: ${escapeHtml(state.houseMeetingLocations?.[house.id] ?? "Not assigned")}</small><small>Leader teachers: ${(state.teachers ?? []).filter(t => t.houseId === house.id && isHouseLeaderTeacher(t)).map(t => escapeHtml(t.name)).join(", ") || "Not assigned"}</small>${(houseLeaders[house.id] ?? []).map((id) => {
                 const student = getStudent(id);
                 return student ? `<button type="button" data-action="remove-house-leader" data-house-id="${house.id}" data-student-id="${id}">${escapeHtml(student.name)} ×</button>` : "";
-              }).join("") || "<small>No student leader assigned</small>"}</span></div>
+              }).join("") || "<small>No House Captain assigned</small>"}</span></div>
             `).join("")}
           </div>
         </section>
         <section>
           <h3>Lab leaders</h3>
-          <p>Create a lab and give its teacher and student leader access to the LAB calendar cards.</p>
+          <p>Create a lab and give its teacher and House Captain/Lab Leader access to its calendar cards. Leaders can be assigned later.</p>
           <form id="lab-assignment-form" class="compact-admin-form">
             <label>Lab name<input name="name" required placeholder="e.g. Robotics Lab" /></label>
             <label>Meeting day<select name="weekday"><option value="1">Monday</option><option value="3">Wednesday</option><option value="4">Thursday</option></select></label>
             <label>Location<input name="location" placeholder="Room" /></label>
             <label>Teacher leader<select name="teacherId"><option value="">Assign later</option>${(state.teachers ?? []).map((item) => `<option value="${item.id}">${escapeHtml(item.name)}</option>`).join("")}</select></label>
-            <label>Student leader<select name="leaderId">${state.students.filter((student) => student.grade >= 6).map((student) => `<option value="${student.id}">${escapeHtml(student.name)} · G${student.grade}</option>`).join("")}</select></label>
+            <label>House Captain/Lab Leader<select name="leaderId"><option value="">Assign later</option>${state.students.filter((student) => student.grade >= 6).map((student) => `<option value="${student.id}">${escapeHtml(student.name)} · G${student.grade}</option>`).join("")}</select></label>
             <button class="secondary-button" type="submit">Create lab access</button>
           </form>
-          <ul class="lab-assignment-list">${labs.map((lab) => `<li><span><strong>${escapeHtml(lab.name)}</strong><small>${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"][lab.weekday]}${lab.location ? ` · ${escapeHtml(lab.location)}` : ""} · Teacher: ${lab.teacherIds?.map((id) => escapeHtml(getTeacher(id)?.name ?? "")).filter(Boolean).join(", ") || "not assigned"} · Student: ${lab.leaderIds.map((id) => escapeHtml(getStudent(id)?.name ?? "")).join(", ")}</small></span><button type="button" data-action="remove-lab" data-lab-id="${lab.id}">Remove</button></li>`).join("") || "<li>No lab leaders assigned yet.</li>"}</ul>
+          <ul class="lab-assignment-list">${labs.map((lab) => `<li><span><strong>${escapeHtml(lab.name)}</strong><small>${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"][lab.weekday]}${lab.location ? ` · ${escapeHtml(lab.location)}` : ""} · Teacher: ${lab.teacherIds?.map((id) => escapeHtml(getTeacher(id)?.name ?? "")).filter(Boolean).join(", ") || "not assigned"} · House Captain/Lab Leader: ${lab.leaderIds.map((id) => escapeHtml(getStudent(id)?.name ?? "")).join(", ") || "Not assigned"}${lab.pendingLeaderNames?.length ? ` · Pending identity: ${lab.pendingLeaderNames.map(escapeHtml).join(", ")}` : ""}</small></span><button type="button" data-action="remove-lab" data-lab-id="${lab.id}">Remove</button></li>`).join("") || "<li>No lab leaders assigned yet.</li>"}</ul>
         </section>
       </div>
+      ${state.leadershipAssignments?.levelUpTeachers ? `<section class="support-section"><h3>Level-Up teachers</h3><ul>${Object.entries(state.leadershipAssignments.levelUpTeachers).map(([grade, ids])=>`<li><strong>Grade ${grade}</strong> · ${ids.map(id=>escapeHtml(getTeacher(id)?.name ?? "")).filter(Boolean).join(", ")}</li>`).join("")}</ul></section>` : ""}
     </details>
   `;
 }
@@ -875,18 +879,27 @@ function getTeacherCalendarCreationScopes() {
   if (activeUser?.type !== "teacher") return [];
   const teacher = getTeacher(activeUser.id);
   const scopes = [];
-  if (teacher?.role === "house-leader" && teacher.houseId) {
+  if (isHouseLeaderTeacher(teacher) && teacher.houseId) {
     scopes.push({ value: `house:${teacher.houseId}`, label: `${getHouse(teacher.houseId).name} event` });
   }
   (state.leadershipAssignments?.labs ?? [])
     .filter((lab) => lab.teacherIds?.includes(teacher.id))
     .forEach((lab) => scopes.push({ value: `lab:${lab.id}`, label: `${lab.name} event` }));
+  getTeacherLevelUpGrades(state, teacher.id).forEach(grade=>scopes.push({value:`level-up:${grade}`,label:`Grade ${grade} Level-Up event`}));
   return scopes;
 }
 
 function canOpenCalendarEventCreator() {
   if (activeUser?.type !== "teacher") return false;
   return getActiveTeacherPermissions().canEditAllCalendarEvents || getTeacherCalendarCreationScopes().length > 0;
+}
+
+function syncCalendarCreationScope() {
+  const form = document.querySelector("#custom-calendar-event-form");
+  if (!form?.elements.scope) return;
+  const [type, grade] = form.elements.scope.value.split(":");
+  form.elements.grade.disabled = type === "level-up";
+  if (type === "level-up") form.elements.grade.value = grade;
 }
 
 function renderCalendarEventCreateModal() {
@@ -902,7 +915,7 @@ function renderCalendarEventCreateModal() {
     <div class="modal-backdrop" data-action="close-calendar-create">
       <section class="modal-panel calendar-create-modal" role="dialog" aria-modal="true" aria-labelledby="calendar-create-title" data-modal-panel>
         <button class="detail-close" type="button" data-action="close-calendar-create" aria-label="Close event creator">×</button>
-        <div class="modal-heading"><span class="calendar-type-badge is-house">Calendar</span><h2 id="calendar-create-title">Create an event</h2><p>Student leaders may edit it after it appears in their calendar.</p></div>
+        <div class="modal-heading"><span class="calendar-type-badge is-house">Calendar</span><h2 id="calendar-create-title">Create an event</h2><p>House Captain/Lab Leader accounts may edit relevant events after they appear in their calendar.</p></div>
         <form id="custom-calendar-event-form" class="compact-admin-form calendar-create-form">
           <label>Date<input name="date" type="date" required /></label>
           <label>Title<input name="title" required maxlength="120" /></label>
@@ -1237,7 +1250,7 @@ function renderDashboard() {
         <section class="student-calendar-identity panel" style="--house-color:${house.color}">
           <img src="${house.image}" alt="${house.name} logo" />
           <div><span>Your house</span><h2>${house.name}</h2><p>${totals[house.id].toLocaleString()} house points</p></div>
-          <div class="student-access-badges">${isHouseLeader ? "<span>House leader</span>" : ""}${labs.map((lab) => `<span>${escapeHtml(lab.name)} leader</span>`).join("")}</div>
+          <div class="student-access-badges">${isHouseLeader || labs.length ? "<span>House Captain/Lab Leader</span>" : ""}${isHouseLeader ? "<span>House Captain</span>" : ""}${labs.map((lab) => `<span>${escapeHtml(lab.name)}</span>`).join("")}</div>
         </section>
         ${renderSchoolCalendar()}
         ${cloudEnabled ? renderSupportNotifications(state, activeUser, escapeHtml) : ""}
@@ -2899,6 +2912,7 @@ function render() {
   }
 
   window.requestAnimationFrame(() => {
+    syncCalendarCreationScope();
     if (activeView === "behavior-concern") updateBehaviorCodePreview();
     if (activeView === "academic-concern") updateAcademicFormOptions();
   });
@@ -3254,6 +3268,7 @@ document.addEventListener("click", async (event) => {
 });
 
 viewRoot.addEventListener("change", (event) => {
+  if (event.target.matches('#custom-calendar-event-form [name="scope"]')) { syncCalendarCreationScope(); return; }
   if (event.target.matches("#calendar-grade-filter")) {
     calendarTeacherGrade = event.target.value;
     selectedCalendarEventId = null;
@@ -3517,7 +3532,7 @@ viewRoot.addEventListener("submit", async (event) => {
         date: formData.get("date"),
         title: formData.get("title"),
         type,
-        grades: formData.get("grade") === "all" ? [] : [formData.get("grade")],
+        grades: scopedType === "level-up" ? [Number(scopedId)] : formData.get("grade") === "all" ? [] : [formData.get("grade")],
         houseIds: type === "house"
           ? [scopedType ? scopedId : formData.get("houseId")].filter((id) => id && id !== "all")
           : [],
