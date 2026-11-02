@@ -2,6 +2,7 @@ import * as data from "./data.js";
 import * as support from "./support-rules.js";
 import * as followup from "./followup-rules.js";
 import { validateConcernTier } from "./tier-rules.js";
+import { visibleLevelUpDocuments } from "./levelup-resources.js";
 
 export function actorForAccount(state, accountId) {
   const teacher = state.teachers.find(item => item.id === accountId);
@@ -41,6 +42,7 @@ export function visibleState(state, actor) {
     houseTotals: data.getHouseTotals(state), notifications,
     leadershipAssignments: state.leadershipAssignments,
     houseMeetingLocations: state.houseMeetingLocations,
+    levelUpDocuments: visibleLevelUpDocuments(state, actor),
     customCalendarEvents: (state.customCalendarEvents ?? []).filter(base => calendar.some(item => item.id === base.id || item.id.startsWith(`${base.id}::`))),
     calendarEventDetails: Object.fromEntries(calendar.map(item => [item.id, {
       startTime: item.startTime, endTime: item.endTime, location: item.location,

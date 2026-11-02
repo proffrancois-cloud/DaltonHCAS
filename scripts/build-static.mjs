@@ -14,6 +14,8 @@ const publicEntries = [
   "cloud-client.js",
   "support-rules.js",
   "support-ui.js",
+  "levelup-resources.js",
+  "pdf-reader.js",
   "followup-ui.js",
   "followup-rules.js",
   "tier-rules.js",

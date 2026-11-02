@@ -3,6 +3,7 @@ import { actorForAccount, applySchoolCommand, synchronizeAlerts, visibleState } 
 import { validateIepPdf } from "./support-rules.js";
 import { pushAction, pushConfig, deliverPush } from "./push-server.js";
 import { taiwanToday as today } from "./followup-rules.js";
+import { canReadLevelUpDocument } from "./levelup-resources.js";
 
 const BOOTSTRAP_HASH = "__BOOTSTRAP_HASH__";
 const supabase = createClient(Deno.env.get("SUPABASE_URL"), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false, autoRefreshToken: false } });
@@ -129,6 +130,15 @@ Deno.serve(async request => {
         if (error) throw error;
         await supabase.from("hcas_audit").insert({ actor_id: actor.id, action: "iep-read", resource_id: document.id });
         return new Response(blob, { headers: { ...headers, ...cors, "Content-Type": "application/pdf", "Content-Disposition": "inline; filename=iep.pdf" } });
+      }
+      if (input.action === "levelup-document-read") {
+        const document = (next.levelUpDocuments ?? []).find(item => item.id === input.id);
+        if (!document || !canReadLevelUpDocument(actor, document)) return json({ error: "This Level-Up document is not available to your account" }, 403, cors);
+        const { data: blob, error } = await supabase.storage.from("hcas-levelup").download(document.path);
+        if (error) throw error;
+        await supabase.from("hcas_audit").insert({ actor_id: actor.id, action: "levelup-document-read", resource_id: document.id });
+        const filename = document.filename.replace(/[^a-zA-Z0-9+_. -]/g, "_");
+        return new Response(blob, { headers: { ...headers, ...cors, "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="${filename}"` } });
       }
       if (input.action === "iep-upload") {
         if (actor.type !== "teacher") return json({ error: "IEP documents are restricted to staff" }, 403, cors);

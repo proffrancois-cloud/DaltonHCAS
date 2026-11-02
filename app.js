@@ -65,6 +65,8 @@ import { renderIepHeart, renderSupportProfile } from "./support-ui.js";
 import { renderFollowupNotifications as renderSupportNotifications, responseHistory, checkInRow } from "./followup-ui.js";
 import { academicStrategies, behavioralStrategies, selOptions } from "./tier-rules.js";
 import { enablePhonePush, disablePhonePush, initializePhonePush } from "./push-client.js";
+import { renderLevelUpAttachments, canReadLevelUpDocument } from "./levelup-resources.js";
+import { openPdfReader } from "./pdf-reader.js";
 let phonePushStatus = "";
 
 let pendingCloudCommand = null;
@@ -209,24 +211,25 @@ async function openIepReader(documentId) {
   if (activeUser?.type !== "teacher") return;
   const doc = (state.iepDocuments ?? []).find(item => item.id === documentId);
   if (!doc) return;
-  const blob = await cloudCall("iep-read", { id: documentId });
-  const objectUrl = URL.createObjectURL(blob);
-  const previousFocus = document.activeElement;
-  document.querySelector("#iep-reader")?.close();
-  const dialog = document.createElement("dialog");
-  dialog.id = "iep-reader";
-  dialog.className = "iep-reader";
-  dialog.setAttribute("aria-labelledby", "iep-reader-title");
-  dialog.innerHTML = `<header><div><small>Private IEP · staff only</small><h2 id="iep-reader-title">${escapeHtml(doc.name)}</h2></div><button class="secondary-button" type="button" data-close-reader aria-label="Close PDF reader">×</button></header><iframe title="Private IEP PDF reader" src="${objectUrl}#toolbar=1"></iframe><footer><a class="secondary-button" href="${objectUrl}" download="${escapeHtml(doc.name)}">Download PDF</a></footer>`;
-  dialog.querySelector("[data-close-reader]").addEventListener("click", () => dialog.close());
-  dialog.addEventListener("close", () => { URL.revokeObjectURL(objectUrl); dialog.remove(); previousFocus?.focus(); }, { once: true });
-  document.body.append(dialog);
-  dialog.showModal();
+  await readSchoolPdf("iep-read", documentId, doc.name, "Private IEP · staff only");
+}
+
+async function readSchoolPdf(action, id, name, label) {
+  const requestorId = activeUser?.id;
+  const blob = await cloudCall(action, { id });
+  if (!requestorId || activeUser?.id !== requestorId || mustChangePassword) return;
+  openPdfReader(blob, { name, label });
 }
 
 async function handleSupportClick(button) {
   const action = button.dataset.action;
-  if (action === "enable-push" || action === "disable-push") {
+  if (action === "open-levelup-document") {
+    const doc = (state.levelUpDocuments ?? []).find(item => item.id === button.dataset.documentId);
+    if (!canReadLevelUpDocument(activeUser, doc)) return true;
+    button.disabled = true;
+    try { await readSchoolPdf("levelup-document-read", doc.id, doc.filename, doc.edition === "teacher" ? "Level-Up · Teacher guide · Staff only" : "Level-Up · Student workbook"); }
+    finally { button.disabled = false; }
+  } else if (action === "enable-push" || action === "disable-push") {
     phonePushStatus = "Updating notification permission…";
     const status = document.querySelector("[data-push-status]");
     if (status) status.textContent = phonePushStatus;
@@ -793,6 +796,7 @@ function renderCalendarEventPanel(events) {
         ${event.leaderIds?.length ? `<p><strong>House Captain/Lab Leader:</strong> ${event.leaderIds.map(id => escapeHtml(getStudent(id)?.name ?? "")).filter(Boolean).join(", ")}</p>` : ""}
         ${event.description ? `<p class="calendar-event-description">${escapeHtml(event.description)}</p>` : '<p class="calendar-event-description is-empty">No additional instructions have been shared yet.</p>'}
         <div class="calendar-resources">
+          ${renderLevelUpAttachments(state, activeUser, event, escapeHtml)}
           ${resourceUrl ? `<a href="${escapeHtml(resourceUrl)}" target="_blank" rel="noopener">Open shared resource</a>` : ""}
           ${event.attachmentData ? `<a href="${escapeHtml(event.attachmentData)}" download="${escapeHtml(event.attachmentName || "event-file")}">Download ${escapeHtml(event.attachmentName || "attached file")}</a>` : ""}
           ${event.updatedBy ? `<small>Updated by ${escapeHtml(event.updatedBy)} · ${formatDateTime(event.updatedAt)}</small>` : ""}
@@ -3028,6 +3032,7 @@ document.addEventListener("click", async (event) => {
       await commitState(removeLabAssignment(state, actionTarget.dataset.labId), "Lab leader access removed.");
       break;
     case "logout":
+      document.querySelector("#school-pdf-reader")?.close();
       if (cloudEnabled) { await cloudLogout(); state = createInitialState(); cloudSnapshot = null; }
       sessionStorage.removeItem(SESSION_KEY);
       sessionStorage.removeItem(LEGACY_SESSION_KEY);
@@ -3740,7 +3745,7 @@ window.addEventListener("school-session-expired", () => {
   activeTeacher = null;
   cloudSnapshot = null;
   state = createInitialState();
-  document.querySelector("#iep-reader")?.close();
+  document.querySelector("#school-pdf-reader")?.close();
   render();
   loginError.textContent = "Your session ended. Please log in again.";
 });

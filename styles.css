@@ -4829,3 +4829,8 @@ body.is-student-session .sidebar-account { margin-top: auto; }
   .check-in-row { flex-wrap:wrap; }
   .support-section { min-width:0; }
 }
+.levelup-attachments { display:flex; flex-wrap:wrap; gap:.7rem; margin:1rem 0; padding:1rem 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+.levelup-attachments h4 { flex-basis:100%; margin:0; }
+.levelup-attachments button { display:flex; flex-wrap:wrap; align-items:center; gap:.45rem; white-space:normal; text-align:left; }
+.levelup-attachments small { font-size:.75rem; font-weight:500; }
+@media(max-width:650px) { .levelup-attachments button { width:100%; } }
