@@ -62,23 +62,31 @@
             <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-16v5h6V4h-6Z" /></svg>
             Dashboard
           </button>
-          <button class="nav-button" type="button" data-view="send">
+          <button class="nav-button" type="button" data-view="send" data-teacher-only>
             <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2.4-7.6L3 11Zm5.2.4 3.2 1 1 3.2L17 7l-8.8 4.4Z" /></svg>
             Send coin
           </button>
-          <button class="nav-button" type="button" data-view="behavior-concern">
+          <button class="nav-button" type="button" data-view="behavior-concern" data-teacher-only>
             <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 2.8 19h18.4L12 3Zm0 5.1 4.9 8.5H7.1L12 8.1ZM11 11v3h2v-3h-2Zm0 4v2h2v-2h-2Z" /></svg>
             Behavior concern
           </button>
-          <button class="nav-button" type="button" data-view="academic-concern">
+          <button class="nav-button" type="button" data-view="academic-concern" data-teacher-only>
             <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h13a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3V4Zm3 2H6v11a1 1 0 0 0 1 1h11V7a1 1 0 0 0-1-1H7Zm2 3h6v2H9V9Zm0 4h6v2H9v-2Z" /></svg>
             Academic concern
+          </button>
+          <button class="nav-button" type="button" data-view="sel-concern" data-teacher-only>
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 21s-7-4.4-7-10.1C5 7.6 7.4 5 10.5 5c.6 0 1.1.1 1.5.3.4-.2.9-.3 1.5-.3C16.6 5 19 7.6 19 10.9 19 16.6 12 21 12 21Zm-3.2-9h2l1.1-2.3L14 15l1.1-3H17" /></svg>
+            SEL concern
           </button>
           <button class="nav-button" type="button" data-view="students">
             <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M16 11c1.7 0 3-1.3 3-3s-1.3-3-3-3-3 1.3-3 3 1.3 3 3 3ZM8 11c1.7 0 3-1.3 3-3S9.7 5 8 5 5 6.3 5 8s1.3 3 3 3Zm8 2c-1.8 0-5 1-5 3v3h10v-3c0-2-3.2-3-5-3ZM8 13c-2.3 0-6 1.2-6 3.5V19h7v-3c0-.8.3-1.5.9-2.1-.7-.5-1.3-.9-1.9-.9Z" /></svg>
             Students
           </button>
-          <button class="nav-button" type="button" data-view="activity">
+          <button class="nav-button" type="button" data-view="administration" data-teacher-only data-administration-nav>
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2 4 6v5c0 5.2 3.4 9.8 8 11 4.6-1.2 8-5.8 8-11V6l-8-4Zm0 5a3 3 0 1 1 0 6 3 3 0 0 1 0-6Zm-4 10.2c.8-2 2.2-3.2 4-3.2s3.2 1.2 4 3.2c-1.1 1.2-2.5 2.1-4 2.7-1.5-.6-2.9-1.5-4-2.7Z" /></svg>
+            Administration
+          </button>
+          <button class="nav-button" type="button" data-view="activity" data-teacher-only>
             <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8Zm1-13h-2v6l5.2 3.1 1-1.7-4.2-2.5V7Z" /></svg>
             My activity
           </button>
@@ -110,23 +118,31 @@
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-16v5h6V4h-6Z" /></svg>
           <span>Dashboard</span>
         </button>
-        <button type="button" data-view="send">
+        <button type="button" data-view="send" data-teacher-only>
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m3 11 18-8-8 18-2.4-7.6L3 11Zm5.2.4 3.2 1 1 3.2L17 7l-8.8 4.4Z" /></svg>
           <span>Send coin</span>
         </button>
-        <button type="button" data-view="behavior-concern">
+        <button type="button" data-view="behavior-concern" data-teacher-only>
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 2.8 19h18.4L12 3Zm0 5.1 4.9 8.5H7.1L12 8.1ZM11 11v3h2v-3h-2Zm0 4v2h2v-2h-2Z" /></svg>
           <span>Behavior</span>
         </button>
-        <button type="button" data-view="academic-concern">
+        <button type="button" data-view="academic-concern" data-teacher-only>
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 4h13a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3V4Zm3 2H6v11a1 1 0 0 0 1 1h11V7a1 1 0 0 0-1-1H7Zm2 3h6v2H9V9Zm0 4h6v2H9v-2Z" /></svg>
           <span>Academic</span>
+        </button>
+        <button type="button" data-view="sel-concern" data-teacher-only>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 21s-7-4.4-7-10.1C5 7.6 7.4 5 10.5 5c.6 0 1.1.1 1.5.3.4-.2.9-.3 1.5-.3C16.6 5 19 7.6 19 10.9 19 16.6 12 21 12 21Z" /></svg>
+          <span>SEL</span>
         </button>
         <button type="button" data-view="students">
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M16 11c1.7 0 3-1.3 3-3s-1.3-3-3-3-3 1.3-3 3 1.3 3 3 3ZM8 11c1.7 0 3-1.3 3-3S9.7 5 8 5 5 6.3 5 8s1.3 3 3 3Zm8 2c-1.8 0-5 1-5 3v3h10v-3c0-2-3.2-3-5-3ZM8 13c-2.3 0-6 1.2-6 3.5V19h7v-3c0-.8.3-1.5.9-2.1-.7-.5-1.3-.9-1.9-.9Z" /></svg>
           <span>Students</span>
         </button>
-        <button type="button" data-view="activity">
+        <button type="button" data-view="administration" data-teacher-only data-administration-nav>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2 4 6v5c0 5.2 3.4 9.8 8 11 4.6-1.2 8-5.8 8-11V6l-8-4Z" /></svg>
+          <span>Admin</span>
+        </button>
+        <button type="button" data-view="activity" data-teacher-only>
           <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2Zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8Zm1-13h-2v6l5.2 3.1 1-1.7-4.2-2.5V7Z" /></svg>
           <span>Activity</span>
         </button>

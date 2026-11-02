@@ -2,6 +2,44 @@ export const MAX_CONCERN_TITLE_LENGTH = 120;
 export const MAX_CONCERN_DESCRIPTION_LENGTH = 2000;
 export const MAX_INTERNAL_NOTE_LENGTH = 2000;
 
+export const BEHAVIOR_LOCATIONS = [
+  "Classroom",
+  "Bathroom",
+  "Staff Room",
+  "Field Trip / Event",
+  "Outside School Grounds",
+  "Basement Area",
+  "Playground",
+  "South Gate Area",
+  "Mat Room",
+  "Sky Lounge",
+  "AV Room",
+  "Sofa Area",
+  "2F Hallway",
+  "Library",
+  "3F Hallway",
+  "Locker / Fish Tank Area",
+  "4F Hallway",
+  "5F Dorm / Hallway",
+  "Gymnasium",
+  "Restricted Area",
+  "Other location"
+];
+
+export const BEHAVIOR_RESPONSE_OPTIONS = [
+  "Teach and re-teach expectations",
+  "Verbal warning",
+  "Time-out",
+  "Teacher-assigned task",
+  "After-class procedures for student",
+  "Detention",
+  "Responsibility development",
+  "Parent contact",
+  "Parent / student / teacher conference",
+  "Dean of Students involvement",
+  "Principal involvement"
+];
+
 export const BEHAVIOR_ISSUES = [
   {
     id: "classroom-misconduct",
@@ -335,6 +373,200 @@ export const BEHAVIOR_STRATEGY_GROUPS = [
       "Record progress indicators and share updates with SST",
       "Report significant deterioration or new safety concerns promptly"
     ]
+  }
+];
+
+const SEL_SUPPORTS = {
+  connection: [
+    "Provide a one-on-one check-in",
+    "Use an interest survey or student inventory",
+    "Offer student jobs or leadership roles"
+  ],
+  regulation: [
+    "Use feelings check-ins",
+    "Teach the student to name and label emotions",
+    "Practice breathing, grounding, or stretching"
+  ],
+  targetedRegulation: [
+    "Provide a planned check-in linked to a coping or participation goal",
+    "Practice the agreed coping or help-seeking strategy before a challenge",
+    "Agree on a discreet signal for help or a break"
+  ],
+  peerSupport: [
+    "Practice respectful communication after peer conflicts",
+    "Recognize help-seeking, emotional regulation, and return to activities",
+    "Provide a planned check-in linked to a coping or participation goal"
+  ],
+  intensive: [
+    "Follow the individualized classroom support plan",
+    "Use the student's agreed distress-support procedures",
+    "Report significant deterioration or new safety concerns promptly"
+  ]
+};
+
+export const SEL_CONCERN_OPTIONS = [
+  {
+    id: "chronic-depression",
+    title: "Chronic depression",
+    tier: 2,
+    pdfReference: "Withdrawal, sadness, or irritability",
+    strategies: SEL_SUPPORTS.targetedRegulation
+  },
+  {
+    id: "moody",
+    title: "Moody",
+    tier: 2,
+    pdfReference: "Changes in behavior or mood that affect learning",
+    strategies: SEL_SUPPORTS.regulation
+  },
+  {
+    id: "losing-interest-motivation",
+    title: "Losing interest / motivation",
+    tier: 2,
+    pdfReference: "Withdrawal from peers or group activities",
+    strategies: SEL_SUPPORTS.connection
+  },
+  {
+    id: "recoil-from-interactions",
+    title: "Recoil from interactions with others",
+    tier: 2,
+    pdfReference: "Isolating themselves from the class or group",
+    strategies: SEL_SUPPORTS.connection
+  },
+  {
+    id: "anxiety",
+    title: "Anxiety",
+    tier: 2,
+    pdfReference: "Increased anxiety or emotional dysregulation",
+    strategies: SEL_SUPPORTS.targetedRegulation
+  },
+  {
+    id: "overdependence",
+    title: "Overdependence",
+    tier: 2,
+    pdfReference: "Frequent emotional check-ins needed",
+    strategies: SEL_SUPPORTS.targetedRegulation
+  },
+  {
+    id: "lack-of-confidence",
+    title: "Lack of confidence",
+    tier: 1,
+    pdfReference: "No direct example; linked to universal relationship-building support",
+    strategies: SEL_SUPPORTS.connection
+  },
+  {
+    id: "self-harm",
+    title: "Self-harm",
+    tier: 3,
+    urgent: true,
+    pdfReference: "Self-harm",
+    strategies: SEL_SUPPORTS.intensive
+  },
+  {
+    id: "cant-calm-down",
+    title: "Can't calm down",
+    tier: 2,
+    pdfReference: "Difficulty with self-regulation",
+    strategies: SEL_SUPPORTS.targetedRegulation
+  },
+  {
+    id: "impulsive",
+    title: "Impulsive",
+    tier: 2,
+    pdfReference: "Difficulty with self-regulation",
+    strategies: SEL_SUPPORTS.regulation
+  },
+  {
+    id: "aggressive-behavior",
+    title: "Aggressive behavior",
+    tier: 3,
+    urgent: true,
+    pdfReference: "Severe emotional dysregulation or immediate safety risk",
+    strategies: SEL_SUPPORTS.intensive
+  },
+  {
+    id: "destroying-property",
+    title: "Destroying property",
+    tier: 3,
+    urgent: true,
+    pdfReference: "No direct SEL example; behavior/safety referral may also be required",
+    strategies: SEL_SUPPORTS.intensive
+  },
+  {
+    id: "suspected-bully",
+    title: "Suspected bully",
+    tier: 2,
+    pdfReference: "Ongoing peer conflict or bullying/repeated exclusion",
+    strategies: SEL_SUPPORTS.peerSupport
+  },
+  {
+    id: "burglary",
+    title: "Burglary",
+    tier: 3,
+    urgent: true,
+    pdfReference: "No direct SEL example; behavior/safety referral may also be required",
+    strategies: SEL_SUPPORTS.intensive
+  },
+  {
+    id: "running-away",
+    title: "Running away",
+    tier: 3,
+    urgent: true,
+    pdfReference: "Any safety concern",
+    strategies: SEL_SUPPORTS.intensive
+  },
+  {
+    id: "smoking",
+    title: "Smoking",
+    tier: 3,
+    urgent: true,
+    pdfReference: "No direct SEL example; behavior/safety referral may also be required",
+    strategies: SEL_SUPPORTS.intensive
+  },
+  {
+    id: "drinking",
+    title: "Drinking",
+    tier: 3,
+    urgent: true,
+    pdfReference: "No direct SEL example; behavior/safety referral may also be required",
+    strategies: SEL_SUPPORTS.intensive
+  },
+  {
+    id: "internet-addiction",
+    title: "Internet addiction",
+    tier: 2,
+    pdfReference: "No direct example; review impact on participation and learning",
+    strategies: SEL_SUPPORTS.targetedRegulation
+  },
+  {
+    id: "irregular-lifestyle",
+    title: "Irregular lifestyle",
+    tier: 2,
+    pdfReference: "Changes in behavior or mood that affect learning",
+    strategies: SEL_SUPPORTS.targetedRegulation
+  },
+  {
+    id: "drug-abuse",
+    title: "Drug abuse",
+    tier: 3,
+    urgent: true,
+    pdfReference: "Any safety concern",
+    strategies: SEL_SUPPORTS.intensive
+  },
+  {
+    id: "suspicion-mental-illness",
+    title: "Suspicion of mental illness",
+    tier: 3,
+    urgent: true,
+    pdfReference: "Significant deterioration or new safety concerns",
+    strategies: SEL_SUPPORTS.intensive
+  },
+  {
+    id: "other",
+    title: "Other",
+    tier: 1,
+    pdfReference: "Use objective observations and request SST review when appropriate",
+    strategies: SEL_SUPPORTS.regulation
   }
 ];
 

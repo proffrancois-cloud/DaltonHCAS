@@ -20,6 +20,8 @@ function add(date, title, grades = CALENDAR_GRADES, type = inferType(title), not
     title,
     grades: [...grades],
     type,
+    startTime: "13:15",
+    endTime: "14:05",
     note,
     source: "2026–27 Dalton Lab Calendar (G6–12)"
   });

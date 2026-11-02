@@ -16,6 +16,8 @@ import {
   addCustomCalendarEvent,
   addAward,
   addBehaviorConcern,
+  addSelCheckIn,
+  addSelConcern,
   authenticateTeacher,
   authenticateUser,
   canEditCalendarEvent,
@@ -30,6 +32,8 @@ import {
   getStudentAwards,
   getStudentBehaviorConcerns,
   getStudentRanking,
+  getStudentSelCheckIns,
+  getStudentSelConcerns,
   getStudentStats,
   getStudentTotal,
   getTeacherAwards,
@@ -281,12 +285,14 @@ test("version 2 activity migrates without losing awards", () => {
   };
 
   const migratedState = migrateStoredState(legacyState);
-  assert.equal(migratedState.version, 6);
+  assert.equal(migratedState.version, 7);
   assert.equal(migratedState.students.length, 11);
   assert.equal(migratedState.students[0].grade, 9);
   assert.deepEqual(migratedState.awards, legacyState.awards);
   assert.deepEqual(migratedState.behaviorConcerns, []);
   assert.deepEqual(migratedState.academicConcerns, []);
+  assert.deepEqual(migratedState.selConcerns, []);
+  assert.deepEqual(migratedState.selCheckIns, []);
   assert.deepEqual(migratedState.customCalendarEvents, []);
   assert.equal(migratedState.teachers.length, TEACHERS.length);
 });
@@ -402,20 +408,24 @@ test("behavior issues exactly cover the 10 Level I and 14 Level II code categori
   assert.equal(BEHAVIOR_ISSUES.filter((issue) => issue.level === 2).length, 14);
 });
 
-test("behavior concerns support multiple students and advance code actions by occurrence", () => {
+test("behavior concerns support multiple students and use the selected occurrence", () => {
   const now = new Date("2026-11-02T04:00:00Z").getTime();
   const state = createInitialState(now);
   const first = addBehaviorConcern(
     state,
     {
       studentIds: ["random1", "random5"],
+      tier: 1,
+      occurrence: 1,
       issueIds: ["classroom-misconduct"],
       title: "Repeated disruption",
       description: "The students repeatedly interrupted direct instruction.",
       strategies: ["Redirect off-task behavior"],
       confidentialNote: "Teacher-only context",
       teacherId: "david",
-      incidentDate: "2026-11-02"
+      incidentDate: "2026-11-02",
+      incidentTime: "13:15",
+      location: "Classroom"
     },
     now + 1_000
   );
@@ -431,11 +441,15 @@ test("behavior concerns support multiple students and advance code actions by oc
     first,
     {
       studentIds: ["random1"],
+      tier: 1,
+      occurrence: 2,
       issueIds: ["classroom-misconduct"],
       title: "Second disruption",
       description: "The behavior occurred again after reteaching.",
       teacherId: "francois",
-      incidentDate: "2026-11-03"
+      incidentDate: "2026-11-03",
+      incidentTime: "13:15",
+      location: "Classroom"
     },
     now + 2_000
   );
@@ -446,13 +460,63 @@ test("Level II behavior concerns always retrieve immediate administrative referr
   const state = createInitialState();
   const updated = addBehaviorConcern(state, {
     studentIds: ["random2"],
+    tier: 2,
+    occurrence: 1,
     issueIds: ["fighting"],
     title: "Physical altercation",
     description: "A physical altercation occurred during lunch.",
     teacherId: "david",
-    incidentDate: "2026-11-02"
+    incidentDate: "2026-11-02",
+    incidentTime: "12:20",
+    location: "Gymnasium"
   });
   assert.equal(updated.behaviorConcerns[0].codeActions[0].label, "Immediate administrative referral");
+});
+
+test("a behavior concern can deduct points from both student and House totals", () => {
+  const state = createInitialState();
+  const beforeStudent = getStudentTotal(state, "random2");
+  const beforeHouse = getHouseTotals(state)[state.students.find((student) => student.id === "random2").houseId];
+  const updated = addBehaviorConcern(state, {
+    studentIds: ["random2"],
+    tier: 1,
+    occurrence: 1,
+    issueIds: ["classroom-misconduct"],
+    title: "Classroom concern",
+    description: "The student repeatedly interrupted direct instruction.",
+    teacherId: "david",
+    incidentDate: "2026-11-02",
+    incidentTime: "13:15",
+    location: "Classroom",
+    deductionValueId: "collaboration",
+    deductionPoints: 20
+  });
+  const deduction = updated.awards.at(-1);
+  assert.equal(deduction.points, -20);
+  assert.equal(deduction.comment, 'Behavior demonstrates poor "Collaboration" value.');
+  assert.equal(getStudentTotal(updated, "random2"), beforeStudent - 20);
+  assert.equal(getHouseTotals(updated)[updated.students.find((student) => student.id === "random2").houseId], beforeHouse - 20);
+});
+
+test("SEL concerns remain teacher records and daily student check-ins replace the same day", () => {
+  const now = new Date("2026-11-02T04:00:00Z").getTime();
+  let state = createInitialState(now);
+  state = addSelConcern(state, {
+    studentIds: ["random1"],
+    concernIds: ["anxiety"],
+    title: "Anxiety observation",
+    description: "The student reported feeling overwhelmed before class.",
+    followUp: "Checked in and offered a quiet reset.",
+    teacherId: "david",
+    incidentDate: "2026-11-02"
+  }, now + 1_000);
+  assert.equal(getStudentSelConcerns(state, "random1").length, 1);
+  const studentUser = authenticateUser("random1", "random1", state);
+  state = addSelCheckIn(state, studentUser, { rating: 2, reflection: "I am worried about a test." }, now + 2_000);
+  state = addSelCheckIn(state, studentUser, { rating: 3, reflection: "A plan helped me feel calmer." }, now + 3_000);
+  const checkIns = getStudentSelCheckIns(state, "random1");
+  assert.equal(checkIns.length, 1);
+  assert.equal(checkIns[0].rating, 3);
 });
 
 test("academic concerns use the six requested profiles with five interventions each", () => {
