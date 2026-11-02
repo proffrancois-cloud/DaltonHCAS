@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import {
   ACADEMIC_PROFILES,
@@ -13,12 +13,16 @@ import {
   VALUES,
   addAcademicConcern,
   addLabAssignment,
+  addCustomCalendarEvent,
   addAward,
   addBehaviorConcern,
   authenticateTeacher,
   authenticateUser,
   canEditCalendarEvent,
+  canCreateCalendarEvent,
   createInitialState,
+  createStudentAccount,
+  createTeacherAccount,
   getHouseLeaders,
   getHouseTotals,
   getCalendarEvents,
@@ -29,10 +33,12 @@ import {
   getStudentStats,
   getStudentTotal,
   getTeacherAwards,
+  getTeacherPermissions,
   getTeacherStats,
   migrateStoredState,
   removeAward,
   setHouseLeader,
+  transferStudentHouse,
   updateCalendarEventDetails
 } from "../data.js";
 
@@ -275,13 +281,73 @@ test("version 2 activity migrates without losing awards", () => {
   };
 
   const migratedState = migrateStoredState(legacyState);
-  assert.equal(migratedState.version, 5);
+  assert.equal(migratedState.version, 6);
   assert.equal(migratedState.students.length, 11);
   assert.equal(migratedState.students[0].grade, 9);
   assert.deepEqual(migratedState.awards, legacyState.awards);
   assert.deepEqual(migratedState.behaviorConcerns, []);
   assert.deepEqual(migratedState.academicConcerns, []);
   assert.deepEqual(migratedState.customCalendarEvents, []);
+  assert.equal(migratedState.teachers.length, TEACHERS.length);
+});
+
+test("super admins manage accounts and House placement while regular teachers cannot", () => {
+  const state = createInitialState();
+  const superAdmin = { type: "teacher", ...TEACHERS.find((teacher) => teacher.role === "super-admin") };
+  const regularTeacher = { type: "teacher", ...TEACHERS.find((teacher) => teacher.role === "teacher") };
+  assert.equal(getTeacherPermissions(superAdmin).canManageAccounts, true);
+  assert.equal(getTeacherPermissions(regularTeacher).canManageAccounts, false);
+  assert.throws(
+    () => createStudentAccount(state, regularTeacher, { name: "New Student", grade: 9, houseId: "red-phoenix" }),
+    /super admin/
+  );
+
+  let nextState = createStudentAccount(state, superAdmin, {
+    name: "New Student",
+    grade: 9,
+    houseId: "red-phoenix"
+  });
+  const student = nextState.students.at(-1);
+  assert.equal(student.username, "NewStudent");
+  nextState = transferStudentHouse(nextState, superAdmin, student.id, "black-turtles");
+  assert.equal(nextState.students.find((item) => item.id === student.id).houseId, "black-turtles");
+
+  nextState = createTeacherAccount(nextState, superAdmin, {
+    name: "House Leader",
+    role: "house-leader",
+    houseId: "green-dragons"
+  });
+  assert.equal(nextState.teachers.at(-1).username, "HouseLeader");
+});
+
+test("House leader teachers publish only their own House events", () => {
+  const superAdmin = { type: "teacher", ...TEACHERS.find((teacher) => teacher.role === "super-admin") };
+  let state = createTeacherAccount(createInitialState(), superAdmin, {
+    name: "Green Leader",
+    role: "house-leader",
+    houseId: "green-dragons"
+  });
+  const leader = { type: "teacher", ...state.teachers.at(-1) };
+  const payload = {
+    date: "2026-11-06",
+    title: "House challenge",
+    type: "house",
+    houseIds: ["green-dragons"]
+  };
+  assert.equal(canCreateCalendarEvent(state, leader, payload), true);
+  assert.equal(
+    canCreateCalendarEvent(state, leader, { ...payload, houseIds: ["red-phoenix"] }),
+    false
+  );
+  state = addCustomCalendarEvent(state, leader, payload);
+  assert.equal(state.customCalendarEvents.at(-1).houseIds[0], "green-dragons");
+});
+
+test("Behavior and academic concerns are top-level navigation items", () => {
+  const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  assert.match(html, /class="nav-button"[^>]+data-view="behavior-concern"/);
+  assert.match(html, /class="nav-button"[^>]+data-view="academic-concern"/);
+  assert.doesNotMatch(html, /nav-submenu|bottom-concern-menu/);
 });
 
 test("the Dalton calendar filters Grade 6–12 events for students and keeps the full teacher view", () => {
@@ -412,7 +478,7 @@ test("academic concerns use the six requested profiles with five interventions e
   assert.equal(getStudentAcademicConcerns(updated, "random4")[0].internalNote, "Teacher-only academic context");
 });
 
-test("student ranking filters by 7C, grade, and publication date", () => {
+test("student ranking filters by 7C, grade, and publication date range", () => {
   const now = new Date("2026-11-02T04:00:00Z").getTime();
   let state = createInitialState(now);
   state = addAward(state, "random1", "creativity", "david", 50, now + 60_000);
@@ -421,6 +487,14 @@ test("student ranking filters by 7C, grade, and publication date", () => {
   assert.deepEqual(creativityRanking.map((student) => student.id), ["random1", "random2"]);
   assert.equal(creativityRanking[0].points, 60);
 
-  const dateRanking = getStudentRanking(state, { date: "2026-11-02" });
+  const dateRanking = getStudentRanking(state, {
+    dateFrom: "2026-11-02",
+    dateTo: "2026-11-02"
+  });
   assert.equal(dateRanking[0].points > 0, true);
+  const emptyRange = getStudentRanking(state, {
+    dateFrom: "2026-11-03",
+    dateTo: "2026-11-04"
+  });
+  assert.equal(emptyRange.every((student) => student.points === 0), true);
 });

@@ -1,4 +1,4 @@
-const CACHE_NAME = "dalton-hcas-v5";
+const CACHE_NAME = "dalton-hcas-v6";
 
 const APP_SHELL = [
   "./",

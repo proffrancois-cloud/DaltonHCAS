@@ -2125,43 +2125,6 @@ legend small {
   transform: translateY(0);
 }
 
-.nav-submenu {
-  display: grid;
-  gap: 4px;
-  margin: -2px 0 5px 26px;
-}
-
-.nav-subbutton {
-  min-height: 40px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 0 10px;
-  color: var(--navy-dark);
-  background: transparent;
-  border: 0;
-  border-radius: 8px;
-  font-size: 0.78rem;
-  font-weight: 650;
-  text-align: left;
-}
-
-.nav-subbutton svg {
-  width: 17px;
-  height: 17px;
-  flex: none;
-  fill: currentColor;
-}
-
-.nav-subbutton:hover {
-  background: var(--school-gold-soft);
-}
-
-.nav-subbutton.is-active {
-  color: var(--navy-dark);
-  background: var(--school-gold);
-}
-
 .student-ranking-panel {
   grid-column: 1 / -1;
 }
@@ -2232,12 +2195,26 @@ legend small {
 }
 
 .date-filter-control {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
   gap: 6px;
 }
 
+.date-filter-control > span {
+  min-width: 126px;
+  flex: 1 1 126px;
+  display: grid;
+  gap: 4px;
+}
+
+.date-filter-control small {
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
 .date-filter-control button {
+  min-height: 46px;
   padding: 0 10px;
   color: var(--navy);
   background: white;
@@ -2932,10 +2909,6 @@ legend small {
   margin: 0;
 }
 
-.bottom-concern-menu {
-  display: none;
-}
-
 .bottom-nav {
   display: none;
 }
@@ -3311,14 +3284,14 @@ legend small {
     left: 0;
     height: calc(68px + env(safe-area-inset-bottom));
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(7, minmax(68px, 1fr));
+    overflow-x: auto;
     padding: 4px 8px env(safe-area-inset-bottom);
     background: var(--surface);
     border-top: 1px solid var(--line);
   }
 
-  .bottom-nav > button,
-  .bottom-concern-menu > summary {
+  .bottom-nav > button {
     min-width: 0;
     min-height: 58px;
     display: grid;
@@ -3333,52 +3306,9 @@ legend small {
     font-weight: 700;
   }
 
-  .bottom-nav > button.is-active,
-  .bottom-concern-menu.is-active > summary,
-  .bottom-concern-menu[open] > summary {
+  .bottom-nav > button.is-active {
     color: var(--navy);
     background: var(--navy-soft);
-  }
-
-  .bottom-concern-menu {
-    position: relative;
-    display: block;
-  }
-
-  .bottom-concern-menu > summary {
-    cursor: pointer;
-    list-style: none;
-  }
-
-  .bottom-concern-menu > summary::-webkit-details-marker {
-    display: none;
-  }
-
-  .bottom-concern-popover {
-    position: fixed;
-    z-index: 35;
-    right: 12px;
-    bottom: calc(74px + env(safe-area-inset-bottom));
-    left: 12px;
-    display: grid;
-    gap: 6px;
-    padding: 8px;
-    background: white;
-    border: 1px solid var(--line);
-    border-radius: 11px;
-    box-shadow: 0 6px 8px color-mix(in srgb, var(--navy-dark) 16%, transparent);
-  }
-
-  .bottom-concern-popover button {
-    min-height: 46px;
-    padding: 0 13px;
-    color: var(--navy-dark);
-    background: var(--school-gold-soft);
-    border: 0;
-    border-radius: 8px;
-    font-size: 0.78rem;
-    font-weight: 750;
-    text-align: left;
   }
 
   .bottom-nav svg {
@@ -3944,6 +3874,46 @@ legend small {
 .compact-admin-form .is-wide,
 .compact-admin-form button {
   grid-column: 1 / -1;
+}
+
+.locked-form-value {
+  min-height: 38px;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  padding: 7px 10px;
+  color: var(--navy-dark);
+  background: var(--school-gold-soft);
+  border-radius: 7px;
+}
+
+.locked-form-value span {
+  color: var(--muted);
+  font-size: 0.64rem;
+}
+
+.account-created-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 20px;
+  padding: 13px 20px;
+  color: var(--navy-dark);
+  background: var(--school-gold-soft);
+  border-top: 1px solid var(--school-gold);
+}
+
+.account-created-notice strong {
+  margin-right: auto;
+}
+
+.account-created-notice span {
+  font-size: 0.75rem;
+}
+
+.account-created-notice code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 800;
 }
 
 .leader-assignment-list {

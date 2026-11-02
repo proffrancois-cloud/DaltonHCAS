@@ -29,16 +29,6 @@ export const DEFAULT_POINTS = 10;
 export const POINT_OPTIONS = [10, 20, 30, 40, 50];
 export const MAX_COMMENT_LENGTH = 300;
 
-export const TEACHERS = [
-  { id: "david", username: "david", name: "David" },
-  { id: "francois", username: "francois", name: "Francois" }
-];
-
-const TEACHER_PASSWORDS = {
-  david: "david",
-  francois: "francois"
-};
-
 export const HOUSES = [
   {
     id: "red-phoenix",
@@ -71,6 +61,19 @@ export const HOUSES = [
     color: "#66717c",
     dark: "#3e4750",
     cupYears: ["2022–2023"]
+  }
+];
+
+export const TEACHER_ROLES = ["teacher", "house-leader", "super-admin"];
+
+const DEMO_TEACHERS = [
+  { id: "david", username: "david", name: "David", houseId: null, role: "teacher" },
+  {
+    id: "francois",
+    username: "francois",
+    name: "Francois",
+    houseId: "black-turtles",
+    role: "super-admin"
   }
 ];
 
@@ -146,6 +149,18 @@ function isRosterStudent(student) {
   );
 }
 
+function isRosterTeacher(teacher) {
+  return Boolean(
+    teacher &&
+      typeof teacher.id === "string" &&
+      typeof teacher.name === "string" &&
+      typeof teacher.username === "string" &&
+      TEACHER_ROLES.includes(teacher.role) &&
+      (teacher.houseId === null || HOUSES.some((house) => house.id === teacher.houseId)) &&
+      (teacher.role !== "house-leader" || teacher.houseId)
+  );
+}
+
 async function loadLocalRoster() {
   for (const source of ["/api/roster", "./private/roster.json"]) {
     try {
@@ -154,7 +169,13 @@ async function loadLocalRoster() {
       const roster = await response.json();
       if (!Array.isArray(roster.students) || !roster.students.length) continue;
       if (!roster.students.every(isRosterStudent)) continue;
-      return roster.students.map((student) => ({ ...student }));
+      if (roster.teachers && (!Array.isArray(roster.teachers) || !roster.teachers.every(isRosterTeacher))) {
+        continue;
+      }
+      return {
+        students: roster.students.map((student) => ({ ...student })),
+        teachers: roster.teachers?.map((teacher) => ({ ...teacher })) ?? null
+      };
     } catch {
       // Try the next private roster source, then fall back to fictional demo data.
     }
@@ -162,33 +183,159 @@ async function loadLocalRoster() {
   return null;
 }
 
-export const STUDENTS = (await loadLocalRoster()) ?? DEMO_STUDENTS;
+const LOCAL_ROSTER = await loadLocalRoster();
+
+export const STUDENTS = LOCAL_ROSTER?.students ?? DEMO_STUDENTS;
+export const TEACHERS = LOCAL_ROSTER?.teachers?.length ? LOCAL_ROSTER.teachers : DEMO_TEACHERS;
 export const AVAILABLE_GRADES = [...new Set(STUDENTS.map((student) => student.grade))].sort(
   (a, b) => a - b
 );
 
-export function authenticateTeacher(username, password) {
+export function authenticateTeacher(username, password, teachers = TEACHERS) {
   const normalizedUsername = String(username ?? "").trim().toLowerCase();
-  const teacher = TEACHERS.find((account) => account.username === normalizedUsername);
+  const normalizedPassword = String(password ?? "").trim().toLowerCase();
+  const teacher = teachers.find(
+    (account) => account.username?.toLowerCase() === normalizedUsername
+  );
 
-  if (!teacher || TEACHER_PASSWORDS[teacher.id] !== password) {
+  if (!teacher || normalizedPassword !== normalizedUsername) {
     return null;
   }
 
   return { ...teacher };
 }
 
-export function authenticateUser(username, password) {
-  const teacher = authenticateTeacher(username, password);
+export function authenticateUser(username, password, accountState = null) {
+  const teachers = accountState?.teachers ?? TEACHERS;
+  const students = accountState?.students ?? STUDENTS;
+  const teacher = authenticateTeacher(username, password, teachers);
   if (teacher) return { type: "teacher", ...teacher };
 
   const normalizedUsername = String(username ?? "").trim().toLowerCase();
   const normalizedPassword = String(password ?? "").trim().toLowerCase();
-  const student = STUDENTS.find(
+  const student = students.find(
     (account) => account.username?.toLowerCase() === normalizedUsername
   );
   if (!student || normalizedPassword !== normalizedUsername) return null;
   return { type: "student", id: student.id, name: student.name, studentId: student.id };
+}
+
+export function buildAccountUsername(value) {
+  return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+function getUniqueUsername(state, name) {
+  const base = buildAccountUsername(name);
+  if (!base) throw new Error("Enter an account name");
+  const usernames = new Set(
+    [...state.students, ...(state.teachers ?? TEACHERS)].map((account) =>
+      account.username.toLowerCase()
+    )
+  );
+  if (!usernames.has(base.toLowerCase())) return base;
+  let suffix = 2;
+  while (usernames.has(`${base}${suffix}`.toLowerCase())) suffix += 1;
+  return `${base}${suffix}`;
+}
+
+function resolveTeacher(state, user) {
+  if (user?.type !== "teacher") return null;
+  return (state.teachers ?? TEACHERS).find((teacher) => teacher.id === user.id) ?? null;
+}
+
+export function getTeacherPermissions(teacher) {
+  const role = teacher?.role ?? "teacher";
+  return {
+    canManageAccounts: role === "super-admin",
+    canManageCalendarAccess: role === "super-admin",
+    canCreateCalendarEvents: role === "super-admin" || role === "house-leader",
+    canEditAllCalendarEvents: role === "super-admin"
+  };
+}
+
+function requireSuperAdmin(state, user) {
+  const teacher = resolveTeacher(state, user);
+  if (!getTeacherPermissions(teacher).canManageAccounts) {
+    throw new Error("Only a super admin can manage accounts");
+  }
+  return teacher;
+}
+
+function hasUniqueAccounts(students, teachers) {
+  const ids = [...students, ...teachers].map((account) => account.id);
+  const usernames = [...students, ...teachers].map((account) => account.username.toLowerCase());
+  return new Set(ids).size === ids.length && new Set(usernames).size === usernames.length;
+}
+
+export function createStudentAccount(state, user, { name, grade, houseId }) {
+  requireSuperAdmin(state, user);
+  const normalizedName = String(name ?? "").trim();
+  const normalizedGrade = Number(grade);
+  if (!normalizedName) throw new Error("Enter the student's name");
+  if (!Number.isInteger(normalizedGrade) || normalizedGrade < 1 || normalizedGrade > 12) {
+    throw new Error("Choose a grade from 1 to 12");
+  }
+  if (!HOUSES.some((house) => house.id === houseId)) throw new Error("Choose a house");
+  const username = getUniqueUsername(state, normalizedName);
+  const student = {
+    id: `student-${username.toLowerCase()}`,
+    name: normalizedName,
+    username,
+    houseId,
+    grade: normalizedGrade
+  };
+  return { ...state, students: [...state.students, student] };
+}
+
+export function createTeacherAccount(state, user, { name, houseId = null, role = "teacher" }) {
+  requireSuperAdmin(state, user);
+  const normalizedName = String(name ?? "").trim();
+  const normalizedHouseId = houseId || null;
+  if (!normalizedName) throw new Error("Enter the teacher's name");
+  if (!TEACHER_ROLES.includes(role)) throw new Error("Choose a valid teacher role");
+  if (normalizedHouseId && !HOUSES.some((house) => house.id === normalizedHouseId)) {
+    throw new Error("Choose a valid house");
+  }
+  if (role === "house-leader" && !normalizedHouseId) {
+    throw new Error("A house leader must be assigned to a house");
+  }
+  const username = getUniqueUsername(state, normalizedName);
+  const teacher = {
+    id: `teacher-${username.toLowerCase()}`,
+    name: normalizedName,
+    username,
+    houseId: normalizedHouseId,
+    role
+  };
+  return { ...state, teachers: [...(state.teachers ?? TEACHERS), teacher] };
+}
+
+export function transferStudentHouse(state, user, studentId, houseId) {
+  requireSuperAdmin(state, user);
+  if (!HOUSES.some((house) => house.id === houseId)) throw new Error("Choose a valid house");
+  const student = state.students.find((item) => item.id === studentId);
+  if (!student) throw new Error("Unknown student");
+  const houseLeaders = Object.fromEntries(
+    HOUSES.map((house) => [
+      house.id,
+      (state.leadershipAssignments?.houseLeaders?.[house.id] ?? []).filter(
+        (leaderId) => leaderId !== studentId
+      )
+    ])
+  );
+  return {
+    ...state,
+    students: state.students.map((item) =>
+      item.id === studentId ? { ...item, houseId } : item
+    ),
+    leadershipAssignments: {
+      ...(state.leadershipAssignments ?? {}),
+      houseLeaders
+    }
+  };
 }
 
 const SEED_RECOGNITIONS = {
@@ -229,8 +376,9 @@ export function createInitialState(now = Date.now()) {
   }
 
   return {
-    version: 5,
+    version: 6,
     students: STUDENTS.map((student) => ({ ...student })),
+    teachers: TEACHERS.map((teacher) => ({ ...teacher })),
     awards,
     behaviorConcerns: [],
     academicConcerns: [],
@@ -252,7 +400,7 @@ export function addAward(
   now = Date.now(),
   comment = ""
 ) {
-  if (!STUDENTS.some((student) => student.id === studentId)) {
+  if (!state.students.some((student) => student.id === studentId)) {
     throw new Error("Unknown student");
   }
 
@@ -260,7 +408,7 @@ export function addAward(
     throw new Error("Unknown HCAS value");
   }
 
-  if (!TEACHERS.some((teacher) => teacher.id === teacherId)) {
+  if (!(state.teachers ?? TEACHERS).some((teacher) => teacher.id === teacherId)) {
     throw new Error("Unknown teacher");
   }
 
@@ -292,7 +440,7 @@ export function addAward(
 }
 
 export function removeAward(state, awardId, teacherId) {
-  if (!TEACHERS.some((teacher) => teacher.id === teacherId)) {
+  if (!(state.teachers ?? TEACHERS).some((teacher) => teacher.id === teacherId)) {
     throw new Error("Unknown teacher");
   }
 
@@ -341,6 +489,7 @@ export function getBehaviorCodeActions(state, studentIds, issueIds) {
 
 export function addBehaviorConcern(state, payload, now = Date.now()) {
   const { studentIds, title, description, teacherId, incidentDate } = normalizeConcernBase(
+    state,
     payload,
     "Behavior"
   );
@@ -385,6 +534,7 @@ export function addBehaviorConcern(state, payload, now = Date.now()) {
 
 export function addAcademicConcern(state, payload, now = Date.now()) {
   const { studentIds, title, description, teacherId, incidentDate } = normalizeConcernBase(
+    state,
     payload,
     "Academic"
   );
@@ -513,7 +663,7 @@ export function getStudentTotal(state, studentId) {
 
 export function getStudentRanking(
   state,
-  { valueId = "all", grade = "all", date = "" } = {}
+  { valueId = "all", grade = "all", dateFrom = "", dateTo = "" } = {}
 ) {
   return state.students
     .filter((student) => grade === "all" || String(student.grade) === String(grade))
@@ -522,7 +672,8 @@ export function getStudentRanking(
         (award) =>
           award.studentId === student.id &&
           (valueId === "all" || award.valueId === valueId) &&
-          (!date || toLocalDateKey(award.createdAt) === date)
+          (!dateFrom || toLocalDateKey(award.createdAt) >= dateFrom) &&
+          (!dateTo || toLocalDateKey(award.createdAt) <= dateTo)
       );
       return {
         ...student,
@@ -559,7 +710,14 @@ export function setHouseLeader(state, houseId, studentId, enabled = true) {
 
 export function addLabAssignment(
   state,
-  { name, weekday, location = "", leaderIds = [], grades = [6, 7, 8, 9, 10] },
+  {
+    name,
+    weekday,
+    location = "",
+    leaderIds = [],
+    teacherIds = [],
+    grades = [6, 7, 8, 9, 10]
+  },
   now = Date.now()
 ) {
   const normalizedName = String(name ?? "").trim();
@@ -568,6 +726,9 @@ export function addLabAssignment(
   const normalizedGrades = [...new Set(grades.map(Number))].filter((grade) => grade >= 1 && grade <= 12);
   const normalizedLeaders = [...new Set(leaderIds)].filter((studentId) =>
     state.students.some((student) => student.id === studentId)
+  );
+  const normalizedTeachers = [...new Set(teacherIds)].filter((teacherId) =>
+    (state.teachers ?? TEACHERS).some((teacher) => teacher.id === teacherId)
   );
   if (!normalizedName || ![1, 2, 3, 4, 5].includes(normalizedWeekday)) {
     throw new Error("Enter a lab name and meeting day");
@@ -579,6 +740,7 @@ export function addLabAssignment(
     weekday: normalizedWeekday,
     location: normalizedLocation,
     leaderIds: normalizedLeaders,
+    teacherIds: normalizedTeachers,
     grades: normalizedGrades.length ? normalizedGrades : [6, 7, 8, 9, 10]
   };
   return {
@@ -600,8 +762,23 @@ export function removeLabAssignment(state, labId) {
   };
 }
 
+export function canCreateCalendarEvent(state, user, { type = "school", houseIds = [] } = {}) {
+  const teacher = resolveTeacher(state, user);
+  if (!teacher) return false;
+  const permissions = getTeacherPermissions(teacher);
+  if (permissions.canEditAllCalendarEvents) return true;
+  return Boolean(
+    permissions.canCreateCalendarEvents &&
+      type === "house" &&
+      teacher.houseId &&
+      houseIds.length === 1 &&
+      houseIds[0] === teacher.houseId
+  );
+}
+
 export function addCustomCalendarEvent(
   state,
+  user,
   { date, title, type = "school", grades = [], houseIds = [], location = "", description = "" },
   now = Date.now()
 ) {
@@ -609,25 +786,55 @@ export function addCustomCalendarEvent(
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date)) || !normalizedTitle) {
     throw new Error("Enter an event date and title");
   }
+  const normalizedType = ["school", "house", "lab", "level-up", "assembly", "closure"].includes(type)
+    ? type
+    : "school";
+  const normalizedHouseIds = [...new Set(houseIds)].filter((houseId) =>
+    HOUSES.some((house) => house.id === houseId)
+  );
+  if (!canCreateCalendarEvent(state, user, { type: normalizedType, houseIds: normalizedHouseIds })) {
+    throw new Error("You cannot publish this calendar event");
+  }
   const event = {
     id: `custom-${now}-${(state.customCalendarEvents ?? []).length}`,
     date,
     title: normalizedTitle,
-    type: ["school", "house", "lab", "level-up", "assembly", "closure"].includes(type)
-      ? type
-      : "school",
+    type: normalizedType,
     grades: [...new Set(grades.map(Number))].filter((grade) => grade >= 1 && grade <= 12),
-    houseIds: [...new Set(houseIds)].filter((houseId) => HOUSES.some((house) => house.id === houseId)),
+    houseIds: normalizedHouseIds,
     location: String(location ?? "").trim(),
     description: String(description ?? "").trim(),
-    source: "HCAS staff"
+    source: user.name,
+    createdBy: user.id,
+    createdAt: new Date(now).toISOString()
   };
   return { ...state, customCalendarEvents: [...(state.customCalendarEvents ?? []), event] };
 }
 
 export function canEditCalendarEvent(state, user, event) {
   if (!user || !event) return false;
-  if (user.type === "teacher") return true;
+  if (user.type === "teacher") {
+    const teacher = resolveTeacher(state, user);
+    if (!teacher) return false;
+    const permissions = getTeacherPermissions(teacher);
+    if (permissions.canEditAllCalendarEvents) return true;
+    if (
+      teacher.role === "house-leader" &&
+      teacher.houseId &&
+      event.type === "house" &&
+      (event.houseId === teacher.houseId || event.houseIds?.includes(teacher.houseId))
+    ) {
+      return true;
+    }
+    if (event.type === "lab" && event.labId) {
+      return Boolean(
+        (state.leadershipAssignments?.labs ?? [])
+          .find((lab) => lab.id === event.labId)
+          ?.teacherIds?.includes(teacher.id)
+      );
+    }
+    return false;
+  }
   const student = state.students.find((item) => item.id === user.studentId);
   if (!student) return false;
   if (event.type === "house") {
@@ -726,11 +933,15 @@ export function getCalendarEvents(
 }
 
 export function isValidStoredState(state) {
+  const baseStudentIds = new Set(STUDENTS.map((student) => student.id));
+  const baseTeacherIds = new Set(TEACHERS.map((teacher) => teacher.id));
   return Boolean(
     state &&
-      state.version === 5 &&
+      state.version === 6 &&
       Array.isArray(state.students) &&
-      state.students.length === STUDENTS.length &&
+      state.students.length >= STUDENTS.length &&
+      Array.isArray(state.teachers) &&
+      state.teachers.length >= TEACHERS.length &&
       Array.isArray(state.awards) &&
       Array.isArray(state.behaviorConcerns) &&
       Array.isArray(state.academicConcerns) &&
@@ -738,18 +949,14 @@ export function isValidStoredState(state) {
       Array.isArray(state.leadershipAssignments.labs) &&
       Array.isArray(state.customCalendarEvents) &&
       state.calendarEventDetails &&
-      state.students.every(
-        (student) =>
-          STUDENTS.some(
-            (knownStudent) =>
-              knownStudent.id === student.id &&
-              knownStudent.houseId === student.houseId &&
-              knownStudent.grade === student.grade
-          )
-      ) &&
-      state.awards.every((award) => isValidAward(award, state.students)) &&
-      state.behaviorConcerns.every((concern) => isValidBehaviorConcern(concern, state.students)) &&
-      state.academicConcerns.every((concern) => isValidAcademicConcern(concern, state.students))
+      state.students.every(isRosterStudent) &&
+      state.teachers.every(isRosterTeacher) &&
+      [...baseStudentIds].every((id) => state.students.some((student) => student.id === id)) &&
+      [...baseTeacherIds].every((id) => state.teachers.some((teacher) => teacher.id === id)) &&
+      hasUniqueAccounts(state.students, state.teachers) &&
+      state.awards.every((award) => isValidAward(award, state.students, state.teachers)) &&
+      state.behaviorConcerns.every((concern) => isValidBehaviorConcern(concern, state.students, state.teachers)) &&
+      state.academicConcerns.every((concern) => isValidAcademicConcern(concern, state.students, state.teachers))
   );
 }
 
@@ -758,11 +965,12 @@ export function migrateStoredState(state) {
     return state;
   }
 
-  if (!state || ![2, 3, 4].includes(state.version) || !Array.isArray(state.students) || !Array.isArray(state.awards)) {
+  if (!state || ![2, 3, 4, 5].includes(state.version) || !Array.isArray(state.students) || !Array.isArray(state.awards)) {
     return null;
   }
 
-  if (!state.awards.every((award) => isValidAward(award, state.students))) return null;
+  const legacyTeachers = state.teachers ?? TEACHERS;
+  if (!state.awards.every((award) => isValidAward(award, state.students, legacyTeachers))) return null;
 
   const rosterMatches = state.students.every((student) =>
     STUDENTS.some((knownStudent) => knownStudent.id === student.id)
@@ -779,8 +987,9 @@ export function migrateStoredState(state) {
     : [];
 
   return {
-    version: 5,
+    version: 6,
     students: STUDENTS.map((student) => ({ ...student })),
+    teachers: TEACHERS.map((teacher) => ({ ...teacher })),
     awards: awards.map((award) => ({ ...award })),
     behaviorConcerns,
     academicConcerns,
@@ -793,12 +1002,12 @@ export function migrateStoredState(state) {
   };
 }
 
-function isValidAward(award, students) {
+function isValidAward(award, students, teachers) {
   return Boolean(
     award &&
       students.some((student) => student.id === award.studentId) &&
       VALUES.some((value) => value.id === award.valueId) &&
-      TEACHERS.some((teacher) => teacher.id === award.teacherId) &&
+      teachers.some((teacher) => teacher.id === award.teacherId) &&
       POINT_OPTIONS.includes(award.points) &&
       (award.comment === undefined ||
         (typeof award.comment === "string" && award.comment.length <= MAX_COMMENT_LENGTH)) &&
@@ -806,7 +1015,7 @@ function isValidAward(award, students) {
   );
 }
 
-function isValidBehaviorConcern(concern, students) {
+function isValidBehaviorConcern(concern, students, teachers) {
   return Boolean(
     concern &&
       concern.studentIds?.length &&
@@ -814,13 +1023,13 @@ function isValidBehaviorConcern(concern, students) {
       concern.issueIds?.every((issueId) => BEHAVIOR_ISSUES.some((issue) => issue.id === issueId)) &&
       typeof concern.title === "string" &&
       typeof concern.description === "string" &&
-      TEACHERS.some((teacher) => teacher.id === concern.teacherId) &&
+      teachers.some((teacher) => teacher.id === concern.teacherId) &&
       !Number.isNaN(new Date(concern.incidentDate).getTime()) &&
       !Number.isNaN(new Date(concern.publishedAt).getTime())
   );
 }
 
-function isValidAcademicConcern(concern, students) {
+function isValidAcademicConcern(concern, students, teachers) {
   return Boolean(
     concern &&
       concern.studentIds?.length &&
@@ -829,24 +1038,24 @@ function isValidAcademicConcern(concern, students) {
       typeof concern.title === "string" &&
       typeof concern.description === "string" &&
       typeof concern.actionDetails === "string" &&
-      TEACHERS.some((teacher) => teacher.id === concern.teacherId) &&
+      teachers.some((teacher) => teacher.id === concern.teacherId) &&
       !Number.isNaN(new Date(concern.incidentDate).getTime()) &&
       !Number.isNaN(new Date(concern.publishedAt).getTime())
   );
 }
 
-function normalizeStudentIds(studentIds) {
+function normalizeStudentIds(state, studentIds) {
   const normalized = [...new Set(studentIds ?? [])];
   if (!normalized.length) throw new Error("Choose at least one student");
-  if (normalized.some((studentId) => !STUDENTS.some((student) => student.id === studentId))) {
+  if (normalized.some((studentId) => !state.students.some((student) => student.id === studentId))) {
     throw new Error("Unknown student");
   }
   return normalized;
 }
 
-function normalizeConcernBase(payload, concernType) {
+function normalizeConcernBase(state, payload, concernType) {
   return {
-    studentIds: normalizeStudentIds(payload.studentIds),
+    studentIds: normalizeStudentIds(state, payload.studentIds),
     title: normalizeRequiredText(
       payload.title,
       MAX_CONCERN_TITLE_LENGTH,
@@ -857,13 +1066,13 @@ function normalizeConcernBase(payload, concernType) {
       MAX_CONCERN_DESCRIPTION_LENGTH,
       `${concernType} concern description`
     ),
-    teacherId: validateTeacher(payload.teacherId),
+    teacherId: validateTeacher(state, payload.teacherId),
     incidentDate: validateDateInput(payload.incidentDate)
   };
 }
 
-function validateTeacher(teacherId) {
-  if (!TEACHERS.some((teacher) => teacher.id === teacherId)) {
+function validateTeacher(state, teacherId) {
+  if (!(state.teachers ?? TEACHERS).some((teacher) => teacher.id === teacherId)) {
     throw new Error("Unknown teacher");
   }
   return teacherId;

@@ -11,6 +11,7 @@ import {
   MAX_COMMENT_LENGTH,
   POINT_OPTIONS,
   TEACHERS,
+  TEACHER_ROLES,
   TIER_ONE_INSTRUCTIONAL_STRATEGIES,
   TIER_TWO_ACADEMIC_INTERVENTIONS,
   VALUES,
@@ -21,6 +22,8 @@ import {
   addBehaviorConcern,
   authenticateUser,
   canEditCalendarEvent,
+  createStudentAccount,
+  createTeacherAccount,
   createInitialState,
   getBehaviorCodeActions,
   getCalendarEvents,
@@ -33,17 +36,19 @@ import {
   getStudentStats,
   getStudentTotal,
   getTeacherAwards,
+  getTeacherPermissions,
   getTeacherStats,
   migrateStoredState,
   removeAward,
   removeLabAssignment,
   setHouseLeader,
+  transferStudentHouse,
   updateCalendarEventDetails
 } from "./data.js";
 
-const STORAGE_KEY = "hcas-house-points-v5";
-const LEGACY_STORAGE_KEYS = ["hcas-house-points-v4", "hcas-house-points-v3", "hcas-house-points-v2"];
-const SESSION_KEY = "hcas-house-points-user-v5";
+const STORAGE_KEY = "hcas-house-points-v6";
+const LEGACY_STORAGE_KEYS = ["hcas-house-points-v5", "hcas-house-points-v4", "hcas-house-points-v3", "hcas-house-points-v2"];
+const SESSION_KEY = "hcas-house-points-user-v6";
 const LEGACY_SESSION_KEY = "hcas-house-points-teacher";
 const viewRoot = document.querySelector("#view-root");
 const toast = document.querySelector("#toast");
@@ -73,13 +78,15 @@ let expandedTeacherValueId = null;
 let lastConfirmation = null;
 let rankingValueFilter = "all";
 let rankingGradeFilter = "all";
-let rankingDateFilter = "";
+let rankingDateFrom = "";
+let rankingDateTo = "";
 let rankingExpanded = false;
 let lastConcernConfirmation = null;
 let concernStudentPreset = null;
 let calendarWeekStart = getInitialCalendarWeek();
 let calendarTeacherGrade = "all";
 let selectedCalendarEventId = null;
+let lastCreatedAccount = null;
 let toastTimer;
 
 function loadState() {
@@ -117,7 +124,7 @@ function loadUserSession() {
   try {
     const saved = JSON.parse(sessionStorage.getItem(SESSION_KEY));
     if (saved?.type === "teacher") {
-      const teacher = TEACHERS.find((item) => item.id === saved.id);
+      const teacher = (state.teachers ?? TEACHERS).find((item) => item.id === saved.id);
       return teacher ? { type: "teacher", ...teacher } : null;
     }
     if (saved?.type === "student") {
@@ -128,7 +135,7 @@ function loadUserSession() {
     // Fall through to the previous teacher-only session format.
   }
   const teacherId = sessionStorage.getItem(LEGACY_SESSION_KEY);
-  const teacher = TEACHERS.find((item) => item.id === teacherId);
+  const teacher = (state.teachers ?? TEACHERS).find((item) => item.id === teacherId);
   return teacher ? { type: "teacher", ...teacher } : null;
 }
 
@@ -177,7 +184,12 @@ function getStudent(studentId) {
 }
 
 function getTeacher(teacherId) {
-  return TEACHERS.find((teacher) => teacher.id === teacherId);
+  return (state.teachers ?? TEACHERS).find((teacher) => teacher.id === teacherId);
+}
+
+function getActiveTeacherPermissions() {
+  const teacher = activeUser?.type === "teacher" ? getTeacher(activeUser.id) : null;
+  return getTeacherPermissions(teacher);
 }
 
 function escapeHtml(value) {
@@ -334,7 +346,14 @@ function getActiveStudent() {
 
 function getCalendarRoleLabel() {
   const student = getActiveStudent();
-  if (!student) return "Teacher · full school calendar";
+  if (!student) {
+    const teacher = activeUser?.type === "teacher" ? getTeacher(activeUser.id) : null;
+    if (teacher?.role === "super-admin") return "Super admin · Full school calendar";
+    if (teacher?.role === "house-leader") {
+      return `${getHouse(teacher.houseId)?.name ?? "House"} leader · Full school calendar`;
+    }
+    return "Teacher · Full school calendar";
+  }
   const isHouseLeader = (state.leadershipAssignments?.houseLeaders?.[student.houseId] ?? []).includes(student.id);
   const labs = (state.leadershipAssignments?.labs ?? []).filter((lab) => lab.leaderIds.includes(student.id));
   if (isHouseLeader && labs.length) return `House leader · Lab leader · Grade ${student.grade}`;
@@ -408,13 +427,22 @@ function renderCalendarEventPanel(events) {
 
 function renderCalendarAdmin() {
   if (activeUser.type !== "teacher") return "";
+  const teacher = getTeacher(activeUser.id);
+  const permissions = getActiveTeacherPermissions();
+  if (!permissions.canCreateCalendarEvents) return "";
   const houseLeaders = state.leadershipAssignments?.houseLeaders ?? {};
   const labs = state.leadershipAssignments?.labs ?? [];
+  const eventTypeFields = permissions.canEditAllCalendarEvents
+    ? `<label>Type<select name="type"><option value="school">School</option><option value="house">House</option><option value="lab">LAB</option><option value="level-up">Level-Up</option><option value="assembly">Assembly</option></select></label>
+       <label>House<select name="houseId"><option value="all">All houses</option>${HOUSES.map((house) => `<option value="${house.id}">${house.name}</option>`).join("")}</select></label>`
+    : `<input name="type" type="hidden" value="house" />
+       <input name="houseId" type="hidden" value="${teacher.houseId}" />
+       <div class="locked-form-value"><span>Event access</span><strong>${getHouse(teacher.houseId).name} only</strong></div>`;
   return `
     <details class="calendar-admin panel">
-      <summary><span>Calendar access & planning</span><small>Assign student leaders and add events</small></summary>
+      <summary><span>${permissions.canManageCalendarAccess ? "Calendar access & planning" : "House event planning"}</span><small>${permissions.canManageCalendarAccess ? "Assign student leaders and add events" : `Publish events for ${getHouse(teacher.houseId).name}`}</small></summary>
       <div class="calendar-admin-grid">
-        <section>
+        ${permissions.canManageCalendarAccess ? `<section>
           <h3>House leaders</h3>
           <p>House leaders can update their own House event instructions and resources.</p>
           <form id="house-leader-form" class="compact-admin-form">
@@ -442,19 +470,63 @@ function renderCalendarAdmin() {
             <button class="secondary-button" type="submit">Create lab access</button>
           </form>
           <ul class="lab-assignment-list">${labs.map((lab) => `<li><span><strong>${escapeHtml(lab.name)}</strong><small>${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"][lab.weekday]}${lab.location ? ` · ${escapeHtml(lab.location)}` : ""} · ${lab.leaderIds.map((id) => escapeHtml(getStudent(id)?.name ?? "")).join(", ")}</small></span><button type="button" data-action="remove-lab" data-lab-id="${lab.id}">Remove</button></li>`).join("") || "<li>No lab leaders assigned yet.</li>"}</ul>
-        </section>
+        </section>` : ""}
         <section>
-          <h3>Add a calendar event</h3>
-          <p>Staff-created events appear alongside the official Dalton calendar.</p>
+          <h3>${permissions.canEditAllCalendarEvents ? "Add a calendar event" : "Add a House event"}</h3>
+          <p>${permissions.canEditAllCalendarEvents ? "Staff-created events appear alongside the official Dalton calendar." : "The event will be visible to your House and partially editable by its student House leaders."}</p>
           <form id="custom-calendar-event-form" class="compact-admin-form">
             <label>Date<input name="date" type="date" required /></label>
             <label>Title<input name="title" required maxlength="120" /></label>
-            <label>Type<select name="type"><option value="school">School</option><option value="house">House</option><option value="lab">LAB</option><option value="level-up">Level-Up</option><option value="assembly">Assembly</option></select></label>
+            ${eventTypeFields}
             <label>Grade<select name="grade"><option value="all">All grades</option>${AVAILABLE_GRADES.map((grade) => `<option value="${grade}">Grade ${grade}</option>`).join("")}</select></label>
-            <label>House<select name="houseId"><option value="all">All houses</option>${HOUSES.map((house) => `<option value="${house.id}">${house.name}</option>`).join("")}</select></label>
             <label>Location<input name="location" maxlength="160" /></label>
             <label class="is-wide">Details<textarea name="description" rows="3" maxlength="1200"></textarea></label>
             <button class="primary-button" type="submit">Publish event</button>
+          </form>
+        </section>
+      </div>
+    </details>
+  `;
+}
+
+function renderSuperAdminTools() {
+  if (activeUser.type !== "teacher") return "";
+  if (!getActiveTeacherPermissions().canManageAccounts) return "";
+  const accountNotice = lastCreatedAccount
+    ? `<div class="account-created-notice" role="status"><strong>${escapeHtml(lastCreatedAccount.name)} is ready</strong><span>Login: <code>${escapeHtml(lastCreatedAccount.username)}</code></span><span>Password: <code>${escapeHtml(lastCreatedAccount.username)}</code></span></div>`
+    : "";
+  return `
+    <details class="calendar-admin super-admin-tools panel">
+      <summary><span>Super admin tools</span><small>Accounts and House placement</small></summary>
+      ${accountNotice}
+      <div class="calendar-admin-grid">
+        <section>
+          <h3>Transfer a student</h3>
+          <p>Move a student to another House. Their recognitions and history stay attached.</p>
+          <form id="transfer-student-form" class="compact-admin-form">
+            <label>Student<select name="studentId">${state.students.map((student) => `<option value="${student.id}">${escapeHtml(student.name)} · ${getHouse(student.houseId).name}</option>`).join("")}</select></label>
+            <label>New House<select name="houseId">${HOUSES.map((house) => `<option value="${house.id}">${house.name}</option>`).join("")}</select></label>
+            <button class="secondary-button" type="submit">Transfer student</button>
+          </form>
+        </section>
+        <section>
+          <h3>Create a student account</h3>
+          <p>The login and password use the student’s name without spaces.</p>
+          <form id="create-student-form" class="compact-admin-form">
+            <label>Full name<input name="name" required maxlength="100" /></label>
+            <label>Grade<select name="grade">${Array.from({ length: 12 }, (_, index) => `<option value="${index + 1}">Grade ${index + 1}</option>`).join("")}</select></label>
+            <label>House<select name="houseId">${HOUSES.map((house) => `<option value="${house.id}">${house.name}</option>`).join("")}</select></label>
+            <button class="secondary-button" type="submit">Create student</button>
+          </form>
+        </section>
+        <section>
+          <h3>Create a teacher account</h3>
+          <p>Choose whether the teacher can publish House events or manage the whole app.</p>
+          <form id="create-teacher-form" class="compact-admin-form">
+            <label>Full name<input name="name" required maxlength="100" /></label>
+            <label>Role<select name="role">${TEACHER_ROLES.map((role) => `<option value="${role}">${role === "super-admin" ? "Super admin" : role === "house-leader" ? "House leader" : "Teacher"}</option>`).join("")}</select></label>
+            <label>House<select name="houseId"><option value="">No House</option>${HOUSES.map((house) => `<option value="${house.id}">${house.name}</option>`).join("")}</select></label>
+            <button class="secondary-button" type="submit">Create teacher</button>
           </form>
         </section>
       </div>
@@ -569,7 +641,8 @@ function renderStudentRanking() {
   const ranking = getStudentRanking(state, {
     valueId: rankingValueFilter,
     grade: rankingGradeFilter,
-    date: rankingDateFilter
+    dateFrom: rankingDateFrom,
+    dateTo: rankingDateTo
   });
   const visibleStudents = rankingExpanded ? ranking : ranking.slice(0, 20);
   const filterLabel = rankingValueFilter === "all" ? "All 7Cs" : getValue(rankingValueFilter).name;
@@ -610,10 +683,11 @@ function renderStudentRanking() {
           </select>
         </label>
         <label>
-          Coin publication date
+          Coin publication range
           <span class="date-filter-control">
-            <input id="ranking-date-filter" type="date" value="${rankingDateFilter}" />
-            ${rankingDateFilter ? '<button type="button" data-action="clear-ranking-date">All dates</button>' : ""}
+            <span><small>From</small><input id="ranking-date-from" type="date" value="${rankingDateFrom}" max="${rankingDateTo}" /></span>
+            <span><small>To</small><input id="ranking-date-to" type="date" value="${rankingDateTo}" min="${rankingDateFrom}" /></span>
+            ${rankingDateFrom || rankingDateTo ? '<button type="button" data-action="clear-ranking-date">All dates</button>' : ""}
           </span>
         </label>
       </div>
@@ -643,7 +717,7 @@ function renderStudentRanking() {
           </tbody>
         </table>
       </div>
-      <p class="ranking-caption">${filterLabel}${rankingDateFilter ? `, published on ${formatDateOnly(rankingDateFilter)}` : ", all publication dates"}.</p>
+      <p class="ranking-caption">${filterLabel}${rankingDateFrom || rankingDateTo ? `, published ${rankingDateFrom ? `from ${formatDateOnly(rankingDateFrom)}` : "from the beginning"} ${rankingDateTo ? `to ${formatDateOnly(rankingDateTo)}` : "onward"}` : ", all publication dates"}.</p>
     </section>
   `;
 }
@@ -682,6 +756,8 @@ function renderDashboard() {
       )}
 
       ${renderSchoolCalendar()}
+
+      ${renderSuperAdminTools()}
 
       <div class="dashboard-layout">
         <section class="panel scoreboard-panel" aria-labelledby="house-points-title">
@@ -1874,11 +1950,6 @@ function render() {
     else button.removeAttribute("aria-current");
   });
 
-  document.querySelector(".bottom-concern-menu")?.classList.toggle(
-    "is-active",
-    ["behavior-concern", "academic-concern"].includes(activeView)
-  );
-
   if (activeView === "send") viewRoot.innerHTML = renderSend();
   else if (activeView === "behavior-concern") viewRoot.innerHTML = renderBehaviorConcern();
   else if (activeView === "academic-concern") viewRoot.innerHTML = renderAcademicConcern();
@@ -1895,7 +1966,7 @@ function render() {
 loginForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const formData = new FormData(loginForm);
-  const user = authenticateUser(formData.get("username"), formData.get("password"));
+  const user = authenticateUser(formData.get("username"), formData.get("password"), state);
 
   if (!user) {
     loginError.textContent = "Incorrect username or password.";
@@ -1958,12 +2029,20 @@ document.addEventListener("click", (event) => {
       render();
       break;
     case "remove-house-leader":
+      if (!getActiveTeacherPermissions().canManageCalendarAccess) {
+        showToast("Only a super admin can change leader access.");
+        break;
+      }
       commitState(
         setHouseLeader(state, actionTarget.dataset.houseId, actionTarget.dataset.studentId, false),
         "House leader access removed."
       );
       break;
     case "remove-lab":
+      if (!getActiveTeacherPermissions().canManageCalendarAccess) {
+        showToast("Only a super admin can change lab access.");
+        break;
+      }
       commitState(removeLabAssignment(state, actionTarget.dataset.labId), "Lab leader access removed.");
       break;
     case "logout":
@@ -1990,7 +2069,8 @@ document.addEventListener("click", (event) => {
       render();
       break;
     case "clear-ranking-date":
-      rankingDateFilter = "";
+      rankingDateFrom = "";
+      rankingDateTo = "";
       render();
       break;
     case "toggle-house-leaders": {
@@ -2200,8 +2280,13 @@ viewRoot.addEventListener("change", (event) => {
   } else if (event.target.matches("#ranking-grade-filter")) {
     rankingGradeFilter = event.target.value;
     render();
-  } else if (event.target.matches("#ranking-date-filter")) {
-    rankingDateFilter = event.target.value;
+  } else if (event.target.matches("#ranking-date-from")) {
+    rankingDateFrom = event.target.value;
+    if (rankingDateTo && rankingDateFrom > rankingDateTo) rankingDateTo = rankingDateFrom;
+    render();
+  } else if (event.target.matches("#ranking-date-to")) {
+    rankingDateTo = event.target.value;
+    if (rankingDateFrom && rankingDateTo < rankingDateFrom) rankingDateFrom = rankingDateTo;
     render();
   } else if (
     event.target.matches('#behavior-concern-form [name="studentIds"]') ||
@@ -2237,8 +2322,66 @@ viewRoot.addEventListener("input", (event) => {
 });
 
 viewRoot.addEventListener("submit", async (event) => {
+  if (event.target.matches("#transfer-student-form")) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    try {
+      lastCreatedAccount = null;
+      commitState(
+        transferStudentHouse(
+          state,
+          activeUser,
+          formData.get("studentId"),
+          formData.get("houseId")
+        ),
+        "Student transferred to the new House."
+      );
+    } catch (error) {
+      showToast(error.message);
+    }
+    return;
+  }
+
+  if (event.target.matches("#create-student-form")) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    try {
+      const nextState = createStudentAccount(state, activeUser, {
+        name: formData.get("name"),
+        grade: formData.get("grade"),
+        houseId: formData.get("houseId")
+      });
+      lastCreatedAccount = nextState.students.at(-1);
+      commitState(nextState, "Student account created.");
+    } catch (error) {
+      showToast(error.message);
+    }
+    return;
+  }
+
+  if (event.target.matches("#create-teacher-form")) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    try {
+      const nextState = createTeacherAccount(state, activeUser, {
+        name: formData.get("name"),
+        role: formData.get("role"),
+        houseId: formData.get("houseId")
+      });
+      lastCreatedAccount = nextState.teachers.at(-1);
+      commitState(nextState, "Teacher account created.");
+    } catch (error) {
+      showToast(error.message);
+    }
+    return;
+  }
+
   if (event.target.matches("#house-leader-form")) {
     event.preventDefault();
+    if (!getActiveTeacherPermissions().canManageCalendarAccess) {
+      showToast("Only a super admin can change leader access.");
+      return;
+    }
     const formData = new FormData(event.target);
     try {
       commitState(
@@ -2253,6 +2396,10 @@ viewRoot.addEventListener("submit", async (event) => {
 
   if (event.target.matches("#lab-assignment-form")) {
     event.preventDefault();
+    if (!getActiveTeacherPermissions().canManageCalendarAccess) {
+      showToast("Only a super admin can change lab access.");
+      return;
+    }
     const formData = new FormData(event.target);
     try {
       const leader = getStudent(formData.get("leaderId"));
@@ -2274,7 +2421,7 @@ viewRoot.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(event.target);
     try {
-      const nextState = addCustomCalendarEvent(state, {
+      const eventPayload = {
         date: formData.get("date"),
         title: formData.get("title"),
         type: formData.get("type"),
@@ -2282,7 +2429,8 @@ viewRoot.addEventListener("submit", async (event) => {
         houseIds: formData.get("houseId") === "all" ? [] : [formData.get("houseId")],
         location: formData.get("location"),
         description: formData.get("description")
-      });
+      };
+      const nextState = addCustomCalendarEvent(state, activeUser, eventPayload);
       calendarWeekStart = startOfCalendarWeek(formData.get("date"));
       commitState(nextState, "Calendar event published.");
     } catch (error) {
