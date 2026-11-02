@@ -1240,7 +1240,7 @@ function renderDashboard() {
         <section class="student-calendar-identity panel" style="--house-color:${house.color}">
           <img src="${house.image}" alt="${house.name} logo" />
           <div><span>Your house</span><h2>${house.name}</h2><p>${totals[house.id].toLocaleString()} house points</p></div>
-          <div class="student-access-badges">${isHouseLeader || labs.length ? "<span>House Captain/Lab Leader</span>" : ""}${isHouseLeader ? "<span>House Captain</span>" : ""}${labs.map((lab) => `<span>${escapeHtml(lab.name)}</span>`).join("")}</div>
+          <div class="student-access-badges">${isHouseLeader ? "<span>House Captain</span>" : ""}${labs.map((lab) => `<span>${escapeHtml(lab.name)}</span>`).join("")}</div>
         </section>
         ${renderSchoolCalendar()}
         ${cloudEnabled ? renderSupportNotifications(state, activeUser, escapeHtml) : ""}
