@@ -1,6 +1,7 @@
 import {
   ACADEMIC_CONCERN_EXAMPLES,
   ACADEMIC_PROFILES,
+  AVAILABLE_GRADES,
   BEHAVIOR_ISSUES,
   BEHAVIOR_STRATEGY_GROUPS,
   HOUSES,
@@ -14,11 +15,15 @@ import {
   TIER_TWO_ACADEMIC_INTERVENTIONS,
   VALUES,
   addAcademicConcern,
+  addCustomCalendarEvent,
+  addLabAssignment,
   addAward,
   addBehaviorConcern,
-  authenticateTeacher,
+  authenticateUser,
+  canEditCalendarEvent,
   createInitialState,
   getBehaviorCodeActions,
+  getCalendarEvents,
   getHouseLeaders,
   getHouseTotals,
   getStudentAcademicConcerns,
@@ -30,12 +35,16 @@ import {
   getTeacherAwards,
   getTeacherStats,
   migrateStoredState,
-  removeAward
+  removeAward,
+  removeLabAssignment,
+  setHouseLeader,
+  updateCalendarEventDetails
 } from "./data.js";
 
-const STORAGE_KEY = "hcas-house-points-v4";
-const LEGACY_STORAGE_KEYS = ["hcas-house-points-v3", "hcas-house-points-v2"];
-const SESSION_KEY = "hcas-house-points-teacher";
+const STORAGE_KEY = "hcas-house-points-v5";
+const LEGACY_STORAGE_KEYS = ["hcas-house-points-v4", "hcas-house-points-v3", "hcas-house-points-v2"];
+const SESSION_KEY = "hcas-house-points-user-v5";
+const LEGACY_SESSION_KEY = "hcas-house-points-teacher";
 const viewRoot = document.querySelector("#view-root");
 const toast = document.querySelector("#toast");
 const loginForm = document.querySelector("#login-form");
@@ -45,7 +54,8 @@ const teacherAvatar = document.querySelector("#teacher-avatar");
 const topbarHouseScores = document.querySelector("#topbar-house-scores");
 
 let state = loadState();
-let activeTeacher = loadTeacherSession();
+let activeUser = loadUserSession();
+let activeTeacher = activeUser?.type === "teacher" ? activeUser : null;
 let activeView = getViewFromHash();
 let selectedValueId = null;
 let selectedPoints = null;
@@ -67,6 +77,9 @@ let rankingDateFilter = "";
 let rankingExpanded = false;
 let lastConcernConfirmation = null;
 let concernStudentPreset = null;
+let calendarWeekStart = getInitialCalendarWeek();
+let calendarTeacherGrade = "all";
+let selectedCalendarEventId = null;
 let toastTimer;
 
 function loadState() {
@@ -93,13 +106,35 @@ function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
-function loadTeacherSession() {
-  const teacherId = sessionStorage.getItem(SESSION_KEY);
-  return TEACHERS.find((teacher) => teacher.id === teacherId) ?? null;
+function commitState(nextState, message = "") {
+  state = nextState;
+  saveState();
+  render();
+  if (message) showToast(message);
 }
 
-function saveTeacherSession(teacher) {
-  sessionStorage.setItem(SESSION_KEY, teacher.id);
+function loadUserSession() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(SESSION_KEY));
+    if (saved?.type === "teacher") {
+      const teacher = TEACHERS.find((item) => item.id === saved.id);
+      return teacher ? { type: "teacher", ...teacher } : null;
+    }
+    if (saved?.type === "student") {
+      const student = state.students.find((item) => item.id === saved.id);
+      return student ? { type: "student", id: student.id, name: student.name, studentId: student.id } : null;
+    }
+  } catch {
+    // Fall through to the previous teacher-only session format.
+  }
+  const teacherId = sessionStorage.getItem(LEGACY_SESSION_KEY);
+  const teacher = TEACHERS.find((item) => item.id === teacherId);
+  return teacher ? { type: "teacher", ...teacher } : null;
+}
+
+function saveUserSession(user) {
+  sessionStorage.setItem(SESSION_KEY, JSON.stringify({ type: user.type, id: user.id }));
+  sessionStorage.removeItem(LEGACY_SESSION_KEY);
 }
 
 function getViewFromHash() {
@@ -117,7 +152,8 @@ function getViewFromHash() {
 }
 
 function setView(view, options = {}) {
-  if (!activeTeacher) return;
+  if (!activeUser) return;
+  if (activeUser.type === "student" && view !== "dashboard") view = "dashboard";
   activeView = view;
   if (options.studentId) {
     profileStudentId = options.studentId;
@@ -255,6 +291,210 @@ function getTodayInputValue() {
   return `${year}-${month}-${day}`;
 }
 
+function toDateKey(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function addCalendarDays(dateKey, amount) {
+  const date = new Date(`${dateKey}T12:00:00`);
+  date.setDate(date.getDate() + amount);
+  return toDateKey(date);
+}
+
+function startOfCalendarWeek(dateKey) {
+  const date = new Date(`${dateKey}T12:00:00`);
+  const offset = (date.getDay() + 6) % 7;
+  date.setDate(date.getDate() - offset);
+  return toDateKey(date);
+}
+
+function getInitialCalendarWeek() {
+  const today = getTodayInputValue();
+  const schoolDate = today < "2026-08-03" || today > "2027-05-31" ? "2026-11-02" : today;
+  return startOfCalendarWeek(schoolDate);
+}
+
+function getCalendarTypeLabel(type) {
+  return {
+    house: "House",
+    lab: "LAB",
+    "level-up": "Level-Up",
+    assembly: "Assembly",
+    closure: "No school",
+    school: "School"
+  }[type] ?? "School";
+}
+
+function getActiveStudent() {
+  return activeUser?.type === "student" ? getStudent(activeUser.studentId) : null;
+}
+
+function getCalendarRoleLabel() {
+  const student = getActiveStudent();
+  if (!student) return "Teacher · full school calendar";
+  const isHouseLeader = (state.leadershipAssignments?.houseLeaders?.[student.houseId] ?? []).includes(student.id);
+  const labs = (state.leadershipAssignments?.labs ?? []).filter((lab) => lab.leaderIds.includes(student.id));
+  if (isHouseLeader && labs.length) return `House leader · Lab leader · Grade ${student.grade}`;
+  if (isHouseLeader) return `House leader · Grade ${student.grade}`;
+  if (labs.length) return `Lab leader · Grade ${student.grade}`;
+  return `Student · Grade ${student.grade}`;
+}
+
+function getVisibleCalendarEvents(startDate = "2026-08-01", endDate = "2027-06-01") {
+  return getCalendarEvents(state, {
+    user: activeUser,
+    startDate,
+    endDate,
+    teacherGrade: calendarTeacherGrade
+  });
+}
+
+function renderCalendarEvent(event) {
+  const gradeLabel = activeUser.type === "teacher" && event.grades?.length && event.grades.length < 7
+    ? ` · G${event.grades.join(", G")}`
+    : "";
+  return `
+    <button
+      class="calendar-event is-${event.type}"
+      type="button"
+      data-action="open-calendar-event"
+      data-event-id="${escapeHtml(event.id)}"
+      aria-label="${escapeHtml(`${event.title}${gradeLabel}. Open details.`)}"
+    >
+      <span>${getCalendarTypeLabel(event.type)}${gradeLabel}</span>
+      <strong>${escapeHtml(event.title)}</strong>
+      ${event.location ? `<small>${escapeHtml(event.location)}</small>` : ""}
+    </button>
+  `;
+}
+
+function renderCalendarEventPanel(events) {
+  if (!selectedCalendarEventId) return "";
+  const event = events.find((item) => item.id === selectedCalendarEventId);
+  if (!event) return "";
+  const editable = canEditCalendarEvent(state, activeUser, event);
+  const resourceUrl = /^https?:\/\//i.test(event.resourceUrl ?? "") ? event.resourceUrl : "";
+  return `
+    <aside class="calendar-event-panel" aria-labelledby="calendar-event-panel-title">
+      <button class="detail-close" type="button" data-action="close-calendar-event" aria-label="Close event details">×</button>
+      <div class="calendar-event-panel-heading">
+        <span class="calendar-type-badge is-${event.type}">${getCalendarTypeLabel(event.type)}</span>
+        <div>
+          <h3 id="calendar-event-panel-title">${escapeHtml(event.title)}</h3>
+          <p>${formatDateOnly(event.date)}${event.location ? ` · ${escapeHtml(event.location)}` : ""}</p>
+        </div>
+      </div>
+      ${event.description ? `<p class="calendar-event-description">${escapeHtml(event.description)}</p>` : '<p class="calendar-event-description is-empty">No additional instructions have been shared yet.</p>'}
+      <div class="calendar-resources">
+        ${resourceUrl ? `<a href="${escapeHtml(resourceUrl)}" target="_blank" rel="noopener">Open shared resource</a>` : ""}
+        ${event.attachmentData ? `<a href="${escapeHtml(event.attachmentData)}" download="${escapeHtml(event.attachmentName || "event-file")}">Download ${escapeHtml(event.attachmentName || "attached file")}</a>` : ""}
+        ${event.updatedBy ? `<small>Updated by ${escapeHtml(event.updatedBy)} · ${formatDateTime(event.updatedAt)}</small>` : ""}
+      </div>
+      ${editable ? `
+        <form class="calendar-event-form" id="calendar-event-form" data-event-id="${escapeHtml(event.id)}">
+          <label>Where<input name="location" value="${escapeHtml(event.location ?? "")}" maxlength="160" placeholder="Room, gym, library…" /></label>
+          <label>Activity details<textarea name="description" maxlength="1200" rows="4" placeholder="Instructions, materials, meeting point…">${escapeHtml(event.description ?? "")}</textarea></label>
+          <label>Shared link<input name="resourceUrl" type="url" value="${escapeHtml(event.resourceUrl ?? "")}" placeholder="https://…" /></label>
+          <label>Document <input name="attachment" type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.jpg,.jpeg,.png" /><small>Optional, maximum 750 KB for this local prototype.</small></label>
+          <button class="primary-button" type="submit">Save event details</button>
+        </form>
+      ` : ""}
+    </aside>
+  `;
+}
+
+function renderCalendarAdmin() {
+  if (activeUser.type !== "teacher") return "";
+  const houseLeaders = state.leadershipAssignments?.houseLeaders ?? {};
+  const labs = state.leadershipAssignments?.labs ?? [];
+  return `
+    <details class="calendar-admin panel">
+      <summary><span>Calendar access & planning</span><small>Assign student leaders and add events</small></summary>
+      <div class="calendar-admin-grid">
+        <section>
+          <h3>House leaders</h3>
+          <p>House leaders can update their own House event instructions and resources.</p>
+          <form id="house-leader-form" class="compact-admin-form">
+            <label>House<select name="houseId" id="leader-house-select">${HOUSES.map((house) => `<option value="${house.id}">${house.name}</option>`).join("")}</select></label>
+            <label>Student<select name="studentId" id="leader-student-select">${state.students.filter((student) => student.houseId === HOUSES[0].id).map((student) => `<option value="${student.id}">${escapeHtml(student.name)} · G${student.grade}</option>`).join("")}</select></label>
+            <button class="secondary-button" type="submit">Assign leader</button>
+          </form>
+          <div class="leader-assignment-list">
+            ${HOUSES.map((house) => `
+              <div><img src="${house.image}" alt="" /><span><strong>${house.name}</strong>${(houseLeaders[house.id] ?? []).map((id) => {
+                const student = getStudent(id);
+                return student ? `<button type="button" data-action="remove-house-leader" data-house-id="${house.id}" data-student-id="${id}">${escapeHtml(student.name)} ×</button>` : "";
+              }).join("") || "<small>No student leader assigned</small>"}</span></div>
+            `).join("")}
+          </div>
+        </section>
+        <section>
+          <h3>Lab leaders</h3>
+          <p>Create a lab and give one student limited editing access to that lab’s calendar cards.</p>
+          <form id="lab-assignment-form" class="compact-admin-form">
+            <label>Lab name<input name="name" required placeholder="e.g. Robotics Lab" /></label>
+            <label>Meeting day<select name="weekday"><option value="1">Monday</option><option value="3">Wednesday</option><option value="4">Thursday</option></select></label>
+            <label>Location<input name="location" placeholder="Room" /></label>
+            <label>Student leader<select name="leaderId">${state.students.filter((student) => student.grade >= 6).map((student) => `<option value="${student.id}">${escapeHtml(student.name)} · G${student.grade}</option>`).join("")}</select></label>
+            <button class="secondary-button" type="submit">Create lab access</button>
+          </form>
+          <ul class="lab-assignment-list">${labs.map((lab) => `<li><span><strong>${escapeHtml(lab.name)}</strong><small>${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"][lab.weekday]}${lab.location ? ` · ${escapeHtml(lab.location)}` : ""} · ${lab.leaderIds.map((id) => escapeHtml(getStudent(id)?.name ?? "")).join(", ")}</small></span><button type="button" data-action="remove-lab" data-lab-id="${lab.id}">Remove</button></li>`).join("") || "<li>No lab leaders assigned yet.</li>"}</ul>
+        </section>
+        <section>
+          <h3>Add a calendar event</h3>
+          <p>Staff-created events appear alongside the official Dalton calendar.</p>
+          <form id="custom-calendar-event-form" class="compact-admin-form">
+            <label>Date<input name="date" type="date" required /></label>
+            <label>Title<input name="title" required maxlength="120" /></label>
+            <label>Type<select name="type"><option value="school">School</option><option value="house">House</option><option value="lab">LAB</option><option value="level-up">Level-Up</option><option value="assembly">Assembly</option></select></label>
+            <label>Grade<select name="grade"><option value="all">All grades</option>${AVAILABLE_GRADES.map((grade) => `<option value="${grade}">Grade ${grade}</option>`).join("")}</select></label>
+            <label>House<select name="houseId"><option value="all">All houses</option>${HOUSES.map((house) => `<option value="${house.id}">${house.name}</option>`).join("")}</select></label>
+            <label>Location<input name="location" maxlength="160" /></label>
+            <label class="is-wide">Details<textarea name="description" rows="3" maxlength="1200"></textarea></label>
+            <button class="primary-button" type="submit">Publish event</button>
+          </form>
+        </section>
+      </div>
+    </details>
+  `;
+}
+
+function renderSchoolCalendar() {
+  const endDate = addCalendarDays(calendarWeekStart, 6);
+  const events = getVisibleCalendarEvents(calendarWeekStart, endDate);
+  const days = Array.from({ length: 7 }, (_, index) => addCalendarDays(calendarWeekStart, index));
+  const weekLabel = `${formatDateOnly(calendarWeekStart)} – ${formatDateOnly(endDate)}`;
+  return `
+    <section class="calendar-section" aria-labelledby="school-calendar-title">
+      <div class="calendar-heading">
+        <div>
+          <span class="eyebrow">Dalton daily reference</span>
+          <h2 id="school-calendar-title">LAB, Level-Up & House calendar</h2>
+          <p>${getCalendarRoleLabel()}</p>
+        </div>
+        <div class="calendar-toolbar">
+          ${activeUser.type === "teacher" ? `<label>View<select id="calendar-grade-filter"><option value="all">All grades</option>${[6, 7, 8, 9, 10, 11, 12].map((grade) => `<option value="${grade}" ${calendarTeacherGrade === String(grade) ? "selected" : ""}>Grade ${grade}</option>`).join("")}</select></label>` : ""}
+          <div class="calendar-week-controls"><button type="button" data-action="calendar-prev" aria-label="Previous week">‹</button><button type="button" data-action="calendar-today">Today</button><button type="button" data-action="calendar-next" aria-label="Next week">›</button></div>
+        </div>
+      </div>
+      <div class="calendar-week-label">${weekLabel}</div>
+      <div class="calendar-week-grid">
+        ${days.map((date) => {
+          const dateEvents = events.filter((event) => event.date === date);
+          const dateObject = new Date(`${date}T12:00:00`);
+          const isToday = date === getTodayInputValue();
+          return `<article class="calendar-day ${isToday ? "is-today" : ""}"><header><span>${new Intl.DateTimeFormat("en", { weekday: "short" }).format(dateObject)}</span><strong>${dateObject.getDate()}</strong></header><div class="calendar-day-events">${dateEvents.map(renderCalendarEvent).join("") || '<span class="calendar-empty">No scheduled event</span>'}</div></article>`;
+        }).join("")}
+      </div>
+      ${renderCalendarEventPanel(events)}
+    </section>
+    ${renderCalendarAdmin()}
+  `;
+}
+
 function renderPageHeader(title, description, action = "") {
   return `
     <header class="page-header">
@@ -292,7 +532,7 @@ function renderTopbarHouseScores() {
         <span>${totals[house.id].toLocaleString()}</span>
       </button>
     `
-  ).join("");
+  ).join("") + (activeUser?.type === "student" ? '<button class="student-mobile-logout" type="button" data-action="logout">Log out</button>' : "");
 }
 
 function renderHouseLeaders(house) {
@@ -361,7 +601,7 @@ function renderStudentRanking() {
           Grade
           <select id="ranking-grade-filter">
             <option value="all" ${rankingGradeFilter === "all" ? "selected" : ""}>All grades</option>
-            ${[9, 10, 11, 12]
+            ${AVAILABLE_GRADES
               .map(
                 (grade) =>
                   `<option value="${grade}" ${rankingGradeFilter === String(grade) ? "selected" : ""}>Grade ${grade}</option>`
@@ -410,6 +650,23 @@ function renderStudentRanking() {
 
 function renderDashboard() {
   const totals = getHouseTotals(state);
+  const activeStudent = getActiveStudent();
+  if (activeStudent) {
+    const house = getHouse(activeStudent.houseId);
+    const isHouseLeader = (state.leadershipAssignments?.houseLeaders?.[activeStudent.houseId] ?? []).includes(activeStudent.id);
+    const labs = (state.leadershipAssignments?.labs ?? []).filter((lab) => lab.leaderIds.includes(activeStudent.id));
+    return `
+      <div class="page student-dashboard">
+        ${renderPageHeader(`Welcome, ${escapeHtml(activeStudent.name)}`, `Grade ${activeStudent.grade} · ${house.name}`)}
+        <section class="student-calendar-identity panel" style="--house-color:${house.color}">
+          <img src="${house.image}" alt="${house.name} logo" />
+          <div><span>Your house</span><h2>${house.name}</h2><p>${totals[house.id].toLocaleString()} house points</p></div>
+          <div class="student-access-badges">${isHouseLeader ? "<span>House leader</span>" : ""}${labs.map((lab) => `<span>${escapeHtml(lab.name)} leader</span>`).join("")}</div>
+        </section>
+        ${renderSchoolCalendar()}
+      </div>
+    `;
+  }
   const rankedHouses = [...HOUSES].sort((a, b) => totals[b.id] - totals[a.id]);
   const maxPoints = Math.max(...Object.values(totals), 1);
   const recentAwards = [...state.awards]
@@ -423,6 +680,8 @@ function renderDashboard() {
         "",
         '<button class="primary-button" type="button" data-action="go-send">Send coin</button>'
       )}
+
+      ${renderSchoolCalendar()}
 
       <div class="dashboard-layout">
         <section class="panel scoreboard-panel" aria-labelledby="house-points-title">
@@ -646,7 +905,7 @@ function renderSend() {
                 Grade
                 <select id="send-grade-filter" class="${sendGradeFilter === "all" ? "" : "has-selection"}">
                   <option value="all" ${sendGradeFilter === "all" ? "selected" : ""}>All grades</option>
-                  ${[9, 10, 11, 12]
+                  ${AVAILABLE_GRADES
                     .map(
                       (grade) =>
                         `<option value="${grade}" ${sendGradeFilter === String(grade) ? "selected" : ""}>Grade ${grade}</option>`
@@ -1032,7 +1291,7 @@ function renderStudents() {
         </div>
         <div class="grade-filters" aria-label="Filter by grade">
           <button type="button" data-action="filter-grade" data-grade="all" class="${studentGradeFilter === "all" ? "is-selected" : ""}">All grades</button>
-          ${[9, 10, 11, 12]
+          ${AVAILABLE_GRADES
             .map(
               (grade) => `
                 <button type="button" data-action="filter-grade" data-grade="${grade}" class="${studentGradeFilter === String(grade) ? "is-selected" : ""}">
@@ -1589,8 +1848,9 @@ function toggleConditionalField(toggleId, fieldId) {
 }
 
 function render() {
-  const isLoggedIn = Boolean(activeTeacher);
+  const isLoggedIn = Boolean(activeUser);
   document.body.classList.toggle("is-logged-out", !isLoggedIn);
+  document.body.classList.toggle("is-student-session", activeUser?.type === "student");
 
   if (!isLoggedIn) {
     viewRoot.innerHTML = "";
@@ -1598,8 +1858,13 @@ function render() {
     return;
   }
 
-  teacherName.textContent = activeTeacher.name;
-  teacherAvatar.alt = `${activeTeacher.name}'s Dalton Plan House Teams emblem`;
+  if (activeUser.type === "student" && activeView !== "dashboard") {
+    activeView = "dashboard";
+    window.history.replaceState(null, "", "#dashboard");
+  }
+  teacherName.textContent = activeUser.name;
+  teacherAvatar.alt = `${activeUser.name}'s Dalton Plan House Teams emblem`;
+  document.querySelector("#account-role").textContent = getCalendarRoleLabel().split(" · ")[0];
   renderTopbarHouseScores();
 
   document.querySelectorAll("[data-view]").forEach((button) => {
@@ -1630,21 +1895,24 @@ function render() {
 loginForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const formData = new FormData(loginForm);
-  const teacher = authenticateTeacher(formData.get("username"), formData.get("password"));
+  const user = authenticateUser(formData.get("username"), formData.get("password"));
 
-  if (!teacher) {
+  if (!user) {
     loginError.textContent = "Incorrect username or password.";
     document.querySelector("#login-password").select();
     return;
   }
 
-  activeTeacher = teacher;
-  saveTeacherSession(teacher);
+  activeUser = user;
+  activeTeacher = user.type === "teacher" ? user : null;
+  activeView = "dashboard";
+  window.history.replaceState(null, "", "#dashboard");
+  saveUserSession(user);
   loginError.textContent = "";
   loginForm.reset();
   render();
   viewRoot.focus({ preventScroll: true });
-  showToast(`Logged in as ${teacher.name}.`);
+  showToast(`Logged in as ${user.name}.`);
 });
 
 document.addEventListener("click", (event) => {
@@ -1665,8 +1933,43 @@ document.addEventListener("click", (event) => {
   if (!actionTarget) return;
 
   switch (actionTarget.dataset.action) {
+    case "calendar-prev":
+      calendarWeekStart = addCalendarDays(calendarWeekStart, -7);
+      selectedCalendarEventId = null;
+      render();
+      break;
+    case "calendar-next":
+      calendarWeekStart = addCalendarDays(calendarWeekStart, 7);
+      selectedCalendarEventId = null;
+      render();
+      break;
+    case "calendar-today":
+      calendarWeekStart = getInitialCalendarWeek();
+      selectedCalendarEventId = null;
+      render();
+      break;
+    case "open-calendar-event":
+      selectedCalendarEventId = actionTarget.dataset.eventId;
+      render();
+      window.requestAnimationFrame(() => document.querySelector(".calendar-event-panel")?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+      break;
+    case "close-calendar-event":
+      selectedCalendarEventId = null;
+      render();
+      break;
+    case "remove-house-leader":
+      commitState(
+        setHouseLeader(state, actionTarget.dataset.houseId, actionTarget.dataset.studentId, false),
+        "House leader access removed."
+      );
+      break;
+    case "remove-lab":
+      commitState(removeLabAssignment(state, actionTarget.dataset.labId), "Lab leader access removed.");
+      break;
     case "logout":
       sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem(LEGACY_SESSION_KEY);
+      activeUser = null;
       activeTeacher = null;
       activeView = "dashboard";
       resetSendSelection();
@@ -1873,7 +2176,19 @@ document.addEventListener("click", (event) => {
 });
 
 viewRoot.addEventListener("change", (event) => {
-  if (event.target.matches("#send-grade-filter")) {
+  if (event.target.matches("#calendar-grade-filter")) {
+    calendarTeacherGrade = event.target.value;
+    selectedCalendarEventId = null;
+    render();
+  } else if (event.target.matches("#leader-house-select")) {
+    const studentSelect = document.querySelector("#leader-student-select");
+    if (studentSelect) {
+      studentSelect.innerHTML = state.students
+        .filter((student) => student.houseId === event.target.value)
+        .map((student) => `<option value="${student.id}">${escapeHtml(student.name)} · G${student.grade}</option>`)
+        .join("");
+    }
+  } else if (event.target.matches("#send-grade-filter")) {
     sendGradeFilter = event.target.value;
     render();
   } else if (event.target.matches("#send-house-filter")) {
@@ -1921,7 +2236,98 @@ viewRoot.addEventListener("input", (event) => {
   }
 });
 
-viewRoot.addEventListener("submit", (event) => {
+viewRoot.addEventListener("submit", async (event) => {
+  if (event.target.matches("#house-leader-form")) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    try {
+      commitState(
+        setHouseLeader(state, formData.get("houseId"), formData.get("studentId"), true),
+        "House leader access assigned."
+      );
+    } catch (error) {
+      showToast(error.message);
+    }
+    return;
+  }
+
+  if (event.target.matches("#lab-assignment-form")) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    try {
+      const leader = getStudent(formData.get("leaderId"));
+      const nextState = addLabAssignment(state, {
+        name: formData.get("name"),
+        weekday: formData.get("weekday"),
+        location: formData.get("location"),
+        leaderIds: [formData.get("leaderId")],
+        grades: leader ? [leader.grade] : []
+      });
+      commitState(nextState, "Lab leader access created.");
+    } catch (error) {
+      showToast(error.message);
+    }
+    return;
+  }
+
+  if (event.target.matches("#custom-calendar-event-form")) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    try {
+      const nextState = addCustomCalendarEvent(state, {
+        date: formData.get("date"),
+        title: formData.get("title"),
+        type: formData.get("type"),
+        grades: formData.get("grade") === "all" ? [] : [formData.get("grade")],
+        houseIds: formData.get("houseId") === "all" ? [] : [formData.get("houseId")],
+        location: formData.get("location"),
+        description: formData.get("description")
+      });
+      calendarWeekStart = startOfCalendarWeek(formData.get("date"));
+      commitState(nextState, "Calendar event published.");
+    } catch (error) {
+      showToast(error.message);
+    }
+    return;
+  }
+
+  if (event.target.matches("#calendar-event-form")) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    const eventId = event.target.dataset.eventId;
+    const calendarEvent = getVisibleCalendarEvents().find((item) => item.id === eventId);
+    if (!calendarEvent) return;
+    const file = formData.get("attachment");
+    if (file?.size > 750_000) {
+      showToast("The document must be smaller than 750 KB.");
+      return;
+    }
+    let attachmentData = calendarEvent.attachmentData ?? "";
+    let attachmentName = calendarEvent.attachmentName ?? "";
+    if (file?.size) {
+      attachmentData = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.addEventListener("load", () => resolve(reader.result));
+        reader.addEventListener("error", reject);
+        reader.readAsDataURL(file);
+      });
+      attachmentName = file.name;
+    }
+    try {
+      const nextState = updateCalendarEventDetails(state, activeUser, calendarEvent, {
+        location: formData.get("location"),
+        description: formData.get("description"),
+        resourceUrl: formData.get("resourceUrl"),
+        attachmentData,
+        attachmentName
+      });
+      commitState(nextState, "Event details saved.");
+    } catch (error) {
+      showToast(error.message);
+    }
+    return;
+  }
+
   if (event.target.matches("#award-form")) {
     event.preventDefault();
     return;

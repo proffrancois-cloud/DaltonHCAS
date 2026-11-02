@@ -12,12 +12,16 @@ import {
   TEACHERS,
   VALUES,
   addAcademicConcern,
+  addLabAssignment,
   addAward,
   addBehaviorConcern,
   authenticateTeacher,
+  authenticateUser,
+  canEditCalendarEvent,
   createInitialState,
   getHouseLeaders,
   getHouseTotals,
+  getCalendarEvents,
   getStudentAcademicConcerns,
   getStudentAwards,
   getStudentBehaviorConcerns,
@@ -27,7 +31,9 @@ import {
   getTeacherAwards,
   getTeacherStats,
   migrateStoredState,
-  removeAward
+  removeAward,
+  setHouseLeader,
+  updateCalendarEventDetails
 } from "../data.js";
 
 test("only the two configured teacher credentials authenticate", () => {
@@ -35,6 +41,14 @@ test("only the two configured teacher credentials authenticate", () => {
   assert.deepEqual(authenticateTeacher(" francois ", "francois"), TEACHERS[1]);
   assert.equal(authenticateTeacher("david", "wrong"), null);
   assert.equal(authenticateTeacher("unknown", "unknown"), null);
+});
+
+test("student accounts use the same normalized username and password", () => {
+  const student = STUDENTS[0];
+  const user = authenticateUser(student.username, student.username);
+  assert.equal(user.type, "student");
+  assert.equal(user.studentId, student.id);
+  assert.equal(authenticateUser(student.username, "wrong"), null);
 });
 
 test("the demo contains the requested grade distribution across valid houses", () => {
@@ -261,12 +275,60 @@ test("version 2 activity migrates without losing awards", () => {
   };
 
   const migratedState = migrateStoredState(legacyState);
-  assert.equal(migratedState.version, 4);
+  assert.equal(migratedState.version, 5);
   assert.equal(migratedState.students.length, 11);
   assert.equal(migratedState.students[0].grade, 9);
   assert.deepEqual(migratedState.awards, legacyState.awards);
   assert.deepEqual(migratedState.behaviorConcerns, []);
   assert.deepEqual(migratedState.academicConcerns, []);
+  assert.deepEqual(migratedState.customCalendarEvents, []);
+});
+
+test("the Dalton calendar filters Grade 6–12 events for students and keeps the full teacher view", () => {
+  const state = createInitialState();
+  const gradeNine = state.students.find((student) => student.grade === 9);
+  const studentEvents = getCalendarEvents(state, {
+    user: { type: "student", studentId: gradeNine.id, name: gradeNine.name },
+    startDate: "2026-08-10",
+    endDate: "2026-08-14"
+  });
+  assert.equal(studentEvents.some((event) => event.title.includes("Lab Fair")), true);
+  assert.equal(studentEvents.every((event) => !event.grades?.length || event.grades.includes(9)), true);
+
+  const teacherEvents = getCalendarEvents(state, {
+    user: { type: "teacher", id: "david", name: "David" },
+    startDate: "2026-08-10",
+    endDate: "2026-08-14"
+  });
+  assert.equal(teacherEvents.length > studentEvents.length, true);
+});
+
+test("house and lab leaders receive only the calendar editing access assigned to them", () => {
+  let state = createInitialState();
+  const student = state.students.find((item) => item.grade >= 9);
+  const user = { type: "student", id: student.id, studentId: student.id, name: student.name };
+  state = setHouseLeader(state, student.houseId, student.id, true);
+  state = addLabAssignment(state, {
+    name: "Robotics Lab",
+    weekday: 1,
+    leaderIds: [student.id],
+    grades: [student.grade]
+  });
+  const events = getCalendarEvents(state, {
+    user,
+    startDate: "2026-08-10",
+    endDate: "2026-08-24"
+  });
+  const houseEvent = events.find((event) => event.type === "house");
+  const labEvent = events.find((event) => event.labId);
+  assert.equal(canEditCalendarEvent(state, user, houseEvent), true);
+  assert.equal(canEditCalendarEvent(state, user, labEvent), true);
+
+  state = updateCalendarEventDetails(state, user, labEvent, {
+    description: "Bring a charged laptop.",
+    location: "Lab 304"
+  });
+  assert.equal(state.calendarEventDetails[labEvent.id].description, "Bring a charged laptop.");
 });
 
 test("behavior issues exactly cover the 10 Level I and 14 Level II code categories", () => {

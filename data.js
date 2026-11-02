@@ -11,6 +11,7 @@ import {
   TIER_ONE_INSTRUCTIONAL_STRATEGIES,
   TIER_TWO_ACADEMIC_INTERVENTIONS
 } from "./concerns-data.js";
+import { OFFICIAL_CALENDAR_EVENTS } from "./calendar-data.js";
 
 export {
   ACADEMIC_CONCERN_EXAMPLES,
@@ -118,19 +119,50 @@ export const VALUES = [
   }
 ];
 
-export const STUDENTS = [
-  { id: "random1", name: "random1", houseId: "red-phoenix", grade: 9 },
-  { id: "random2", name: "random2", houseId: "black-turtles", grade: 9 },
-  { id: "random3", name: "random3", houseId: "green-dragons", grade: 10 },
-  { id: "random4", name: "random4", houseId: "white-tigers", grade: 10 },
-  { id: "random5", name: "random5", houseId: "red-phoenix", grade: 10 },
-  { id: "random6", name: "random6", houseId: "black-turtles", grade: 11 },
-  { id: "random7", name: "random7", houseId: "green-dragons", grade: 11 },
-  { id: "random8", name: "random8", houseId: "white-tigers", grade: 11 },
-  { id: "random9", name: "random9", houseId: "red-phoenix", grade: 12 },
-  { id: "random10", name: "random10", houseId: "green-dragons", grade: 12 },
-  { id: "random11", name: "random11", houseId: "white-tigers", grade: 12 }
+const DEMO_STUDENTS = [
+  { id: "random1", name: "random1", username: "random1", houseId: "red-phoenix", grade: 9 },
+  { id: "random2", name: "random2", username: "random2", houseId: "black-turtles", grade: 9 },
+  { id: "random3", name: "random3", username: "random3", houseId: "green-dragons", grade: 10 },
+  { id: "random4", name: "random4", username: "random4", houseId: "white-tigers", grade: 10 },
+  { id: "random5", name: "random5", username: "random5", houseId: "red-phoenix", grade: 10 },
+  { id: "random6", name: "random6", username: "random6", houseId: "black-turtles", grade: 11 },
+  { id: "random7", name: "random7", username: "random7", houseId: "green-dragons", grade: 11 },
+  { id: "random8", name: "random8", username: "random8", houseId: "white-tigers", grade: 11 },
+  { id: "random9", name: "random9", username: "random9", houseId: "red-phoenix", grade: 12 },
+  { id: "random10", name: "random10", username: "random10", houseId: "green-dragons", grade: 12 },
+  { id: "random11", name: "random11", username: "random11", houseId: "white-tigers", grade: 12 }
 ];
+
+function isRosterStudent(student) {
+  return Boolean(
+    student &&
+      typeof student.id === "string" &&
+      typeof student.name === "string" &&
+      typeof student.username === "string" &&
+      HOUSES.some((house) => house.id === student.houseId) &&
+      Number.isInteger(student.grade) &&
+      student.grade >= 1 &&
+      student.grade <= 12
+  );
+}
+
+async function loadLocalRoster() {
+  try {
+    const response = await fetch("./private/roster.json", { cache: "no-store" });
+    if (!response.ok) return null;
+    const roster = await response.json();
+    if (!Array.isArray(roster.students) || !roster.students.length) return null;
+    if (!roster.students.every(isRosterStudent)) return null;
+    return roster.students.map((student) => ({ ...student }));
+  } catch {
+    return null;
+  }
+}
+
+export const STUDENTS = (await loadLocalRoster()) ?? DEMO_STUDENTS;
+export const AVAILABLE_GRADES = [...new Set(STUDENTS.map((student) => student.grade))].sort(
+  (a, b) => a - b
+);
 
 export function authenticateTeacher(username, password) {
   const normalizedUsername = String(username ?? "").trim().toLowerCase();
@@ -141,6 +173,19 @@ export function authenticateTeacher(username, password) {
   }
 
   return { ...teacher };
+}
+
+export function authenticateUser(username, password) {
+  const teacher = authenticateTeacher(username, password);
+  if (teacher) return { type: "teacher", ...teacher };
+
+  const normalizedUsername = String(username ?? "").trim().toLowerCase();
+  const normalizedPassword = String(password ?? "").trim().toLowerCase();
+  const student = STUDENTS.find(
+    (account) => account.username?.toLowerCase() === normalizedUsername
+  );
+  if (!student || normalizedPassword !== normalizedUsername) return null;
+  return { type: "student", id: student.id, name: student.name, studentId: student.id };
 }
 
 const SEED_RECOGNITIONS = {
@@ -181,11 +226,17 @@ export function createInitialState(now = Date.now()) {
   }
 
   return {
-    version: 4,
+    version: 5,
     students: STUDENTS.map((student) => ({ ...student })),
     awards,
     behaviorConcerns: [],
-    academicConcerns: []
+    academicConcerns: [],
+    leadershipAssignments: {
+      houseLeaders: Object.fromEntries(HOUSES.map((house) => [house.id, []])),
+      labs: []
+    },
+    customCalendarEvents: [],
+    calendarEventDetails: {}
   };
 }
 
@@ -484,15 +535,206 @@ export function getStudentRanking(
     );
 }
 
+export function setHouseLeader(state, houseId, studentId, enabled = true) {
+  const student = state.students.find((item) => item.id === studentId);
+  if (!HOUSES.some((house) => house.id === houseId) || !student || student.houseId !== houseId) {
+    throw new Error("House leaders must be students in the selected house");
+  }
+  const houseLeaders = { ...(state.leadershipAssignments?.houseLeaders ?? {}) };
+  const current = new Set(houseLeaders[houseId] ?? []);
+  if (enabled) current.add(studentId);
+  else current.delete(studentId);
+  houseLeaders[houseId] = [...current];
+  return {
+    ...state,
+    leadershipAssignments: {
+      ...(state.leadershipAssignments ?? {}),
+      houseLeaders
+    }
+  };
+}
+
+export function addLabAssignment(
+  state,
+  { name, weekday, location = "", leaderIds = [], grades = [6, 7, 8, 9, 10] },
+  now = Date.now()
+) {
+  const normalizedName = String(name ?? "").trim();
+  const normalizedLocation = String(location ?? "").trim();
+  const normalizedWeekday = Number(weekday);
+  const normalizedGrades = [...new Set(grades.map(Number))].filter((grade) => grade >= 1 && grade <= 12);
+  const normalizedLeaders = [...new Set(leaderIds)].filter((studentId) =>
+    state.students.some((student) => student.id === studentId)
+  );
+  if (!normalizedName || ![1, 2, 3, 4, 5].includes(normalizedWeekday)) {
+    throw new Error("Enter a lab name and meeting day");
+  }
+  if (!normalizedLeaders.length) throw new Error("Select at least one student lab leader");
+  const lab = {
+    id: `lab-${now}-${(state.leadershipAssignments?.labs ?? []).length}`,
+    name: normalizedName,
+    weekday: normalizedWeekday,
+    location: normalizedLocation,
+    leaderIds: normalizedLeaders,
+    grades: normalizedGrades.length ? normalizedGrades : [6, 7, 8, 9, 10]
+  };
+  return {
+    ...state,
+    leadershipAssignments: {
+      ...(state.leadershipAssignments ?? {}),
+      labs: [...(state.leadershipAssignments?.labs ?? []), lab]
+    }
+  };
+}
+
+export function removeLabAssignment(state, labId) {
+  return {
+    ...state,
+    leadershipAssignments: {
+      ...(state.leadershipAssignments ?? {}),
+      labs: (state.leadershipAssignments?.labs ?? []).filter((lab) => lab.id !== labId)
+    }
+  };
+}
+
+export function addCustomCalendarEvent(
+  state,
+  { date, title, type = "school", grades = [], houseIds = [], location = "", description = "" },
+  now = Date.now()
+) {
+  const normalizedTitle = String(title ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date)) || !normalizedTitle) {
+    throw new Error("Enter an event date and title");
+  }
+  const event = {
+    id: `custom-${now}-${(state.customCalendarEvents ?? []).length}`,
+    date,
+    title: normalizedTitle,
+    type: ["school", "house", "lab", "level-up", "assembly", "closure"].includes(type)
+      ? type
+      : "school",
+    grades: [...new Set(grades.map(Number))].filter((grade) => grade >= 1 && grade <= 12),
+    houseIds: [...new Set(houseIds)].filter((houseId) => HOUSES.some((house) => house.id === houseId)),
+    location: String(location ?? "").trim(),
+    description: String(description ?? "").trim(),
+    source: "HCAS staff"
+  };
+  return { ...state, customCalendarEvents: [...(state.customCalendarEvents ?? []), event] };
+}
+
+export function canEditCalendarEvent(state, user, event) {
+  if (!user || !event) return false;
+  if (user.type === "teacher") return true;
+  const student = state.students.find((item) => item.id === user.studentId);
+  if (!student) return false;
+  if (event.type === "house") {
+    return (state.leadershipAssignments?.houseLeaders?.[student.houseId] ?? []).includes(student.id);
+  }
+  if (event.type === "lab" && event.labId) {
+    return (state.leadershipAssignments?.labs ?? [])
+      .find((lab) => lab.id === event.labId)
+      ?.leaderIds.includes(student.id) ?? false;
+  }
+  return false;
+}
+
+export function updateCalendarEventDetails(state, user, event, details) {
+  if (!canEditCalendarEvent(state, user, event)) throw new Error("You cannot edit this event");
+  const normalized = {
+    description: String(details.description ?? "").trim().slice(0, 1200),
+    location: String(details.location ?? "").trim().slice(0, 160),
+    resourceUrl: String(details.resourceUrl ?? "").trim().slice(0, 500),
+    attachmentName: String(details.attachmentName ?? "").trim().slice(0, 180),
+    attachmentData: String(details.attachmentData ?? "").slice(0, 1_100_000),
+    updatedAt: new Date().toISOString(),
+    updatedBy: user.name
+  };
+  return {
+    ...state,
+    calendarEventDetails: {
+      ...(state.calendarEventDetails ?? {}),
+      [event.id]: normalized
+    }
+  };
+}
+
+function mergeCalendarDetails(state, event) {
+  const details = state.calendarEventDetails?.[event.id] ?? {};
+  return { ...event, ...details, baseTitle: event.title };
+}
+
+function getDateWeekday(date) {
+  return new Date(`${date}T12:00:00`).getDay();
+}
+
+export function getCalendarEvents(
+  state,
+  { user, startDate = "2026-08-01", endDate = "2027-06-01", teacherGrade = "all" } = {}
+) {
+  const baseEvents = [...OFFICIAL_CALENDAR_EVENTS, ...(state.customCalendarEvents ?? [])].filter(
+    (event) => event.date >= startDate && event.date <= endDate
+  );
+  const student = user?.type === "student"
+    ? state.students.find((item) => item.id === user.studentId)
+    : null;
+  const result = [];
+
+  for (const baseEvent of baseEvents) {
+    if (user?.type === "teacher" && teacherGrade !== "all" && baseEvent.grades?.length && !baseEvent.grades.includes(Number(teacherGrade))) continue;
+    if (student && baseEvent.grades?.length && !baseEvent.grades.includes(student.grade)) continue;
+    if (student && baseEvent.houseIds?.length && !baseEvent.houseIds.includes(student.houseId)) continue;
+
+    if (baseEvent.type === "house") {
+      const houses = student ? [student.houseId] : baseEvent.houseIds?.length ? baseEvent.houseIds : HOUSES.map((house) => house.id);
+      houses.forEach((houseId) => {
+        const house = HOUSES.find((item) => item.id === houseId);
+        const event = { ...baseEvent, id: `${baseEvent.id}::${houseId}`, houseId, title: `${baseEvent.title} · ${house.name}` };
+        result.push(mergeCalendarDetails(state, event));
+      });
+      continue;
+    }
+
+    if (baseEvent.type === "lab") {
+      const labs = (state.leadershipAssignments?.labs ?? []).filter(
+        (lab) => lab.weekday === getDateWeekday(baseEvent.date) && (!baseEvent.grades?.length || lab.grades.some((grade) => baseEvent.grades.includes(grade)))
+      );
+      if (labs.length && (user?.type === "teacher" || student)) {
+        const visibleLabs = student
+          ? labs.filter((lab) => lab.grades.includes(student.grade) || lab.leaderIds.includes(student.id))
+          : labs;
+        visibleLabs.forEach((lab) => {
+          const event = {
+            ...baseEvent,
+            id: `${baseEvent.id}::${lab.id}`,
+            labId: lab.id,
+            title: lab.name,
+            location: lab.location || baseEvent.location
+          };
+          result.push(mergeCalendarDetails(state, event));
+        });
+        if (visibleLabs.length) continue;
+      }
+    }
+
+    result.push(mergeCalendarDetails(state, baseEvent));
+  }
+
+  return result.sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
+}
+
 export function isValidStoredState(state) {
   return Boolean(
     state &&
-      state.version === 4 &&
+      state.version === 5 &&
       Array.isArray(state.students) &&
       state.students.length === STUDENTS.length &&
       Array.isArray(state.awards) &&
       Array.isArray(state.behaviorConcerns) &&
       Array.isArray(state.academicConcerns) &&
+      state.leadershipAssignments &&
+      Array.isArray(state.leadershipAssignments.labs) &&
+      Array.isArray(state.customCalendarEvents) &&
+      state.calendarEventDetails &&
       state.students.every(
         (student) =>
           STUDENTS.some(
@@ -513,18 +755,38 @@ export function migrateStoredState(state) {
     return state;
   }
 
-  if (!state || ![2, 3].includes(state.version) || !Array.isArray(state.students) || !Array.isArray(state.awards)) {
+  if (!state || ![2, 3, 4].includes(state.version) || !Array.isArray(state.students) || !Array.isArray(state.awards)) {
     return null;
   }
 
   if (!state.awards.every((award) => isValidAward(award, state.students))) return null;
 
+  const rosterMatches = state.students.every((student) =>
+    STUDENTS.some((knownStudent) => knownStudent.id === student.id)
+  );
+  const validStudentIds = new Set(STUDENTS.map((student) => student.id));
+  const awards = rosterMatches
+    ? state.awards.filter((award) => validStudentIds.has(award.studentId))
+    : [];
+  const behaviorConcerns = rosterMatches
+    ? (state.behaviorConcerns ?? []).filter((concern) => concern.studentIds?.every((id) => validStudentIds.has(id)))
+    : [];
+  const academicConcerns = rosterMatches
+    ? (state.academicConcerns ?? []).filter((concern) => concern.studentIds?.every((id) => validStudentIds.has(id)))
+    : [];
+
   return {
-    version: 4,
+    version: 5,
     students: STUDENTS.map((student) => ({ ...student })),
-    awards: state.awards.map((award) => ({ ...award })),
-    behaviorConcerns: [],
-    academicConcerns: []
+    awards: awards.map((award) => ({ ...award })),
+    behaviorConcerns,
+    academicConcerns,
+    leadershipAssignments: state.leadershipAssignments ?? {
+      houseLeaders: Object.fromEntries(HOUSES.map((house) => [house.id, []])),
+      labs: []
+    },
+    customCalendarEvents: state.customCalendarEvents ?? [],
+    calendarEventDetails: state.calendarEventDetails ?? {}
   };
 }
 
