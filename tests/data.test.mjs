@@ -627,7 +627,7 @@ test("a behavior concern can deduct points from both student and House totals", 
   assert.equal(getHouseTotals(updated)[updated.students.find((student) => student.id === "random2").houseId], beforeHouse - 20);
 });
 
-test("SEL concerns remain teacher records and daily student check-ins replace the same day", () => {
+test("SEL concerns remain teacher records and daily student check-ins keep separate entries on the same day", () => {
   const now = new Date("2026-11-02T04:00:00Z").getTime();
   let state = createInitialState(now);
   state = addSelConcern(state, {
@@ -644,7 +644,7 @@ test("SEL concerns remain teacher records and daily student check-ins replace th
   state = addSelCheckIn(state, studentUser, { rating: 2, reflection: "I am worried about a test." }, now + 2_000);
   state = addSelCheckIn(state, studentUser, { rating: 3, reflection: "A plan helped me feel calmer." }, now + 3_000);
   const checkIns = getStudentSelCheckIns(state, "random1");
-  assert.equal(checkIns.length, 1);
+  assert.equal(checkIns.length, 2);
   assert.equal(checkIns[0].rating, 3);
 });
 

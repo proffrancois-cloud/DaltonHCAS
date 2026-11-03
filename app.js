@@ -59,7 +59,7 @@ import {
 } from "./data.js";
 import { cloudEnabled, cloudLogin, cloudCall, cloudChangePassword, cloudLogout, hasCloudSession } from "./cloud-client.js";
 import { SMART_FIELDS, isSupervisor } from "./support-rules.js";
-import { renderIepHeart, renderSupportProfile, renderSupportDocuments } from "./support-ui.js";
+import { renderIepHeart, renderSupportProfile, renderSupportDocuments, renderTrustedAdults } from "./support-ui.js";
 import { renderFollowupNotifications as renderSupportNotifications, responseHistory, checkInRow } from "./followup-ui.js";
 import { academicStrategies, behavioralStrategies, selOptions } from "./tier-rules.js";
 import { enablePhonePush, disablePhonePush, initializePhonePush } from "./push-client.js";
@@ -151,6 +151,7 @@ let calendarTeacherGrade = "";
 let selectedCalendarEventId = null;
 let calendarCreateOpen = false;
 let selCheckInOpen = false;
+let trustedAdultPickerOpen = false;
 let lastCreatedAccount = null;
 let recordEditTarget = null;
 let toastTimer;
@@ -257,9 +258,25 @@ async function handleSupportClick(button) {
     await runCloudAction("notification-read", { key: button.dataset.notificationKey });
   } else if (action === "goal-access") {
     await runCloudAction("goal-access", { id: button.dataset.goalId, field: button.dataset.field, canEdit: button.dataset.allow === "true" });
+  } else if (action === "add-trusted-adult") {
+    trustedAdultPickerOpen = true;
+    const options = [...viewRoot.querySelectorAll(".trusted-adult-picker button")];
+    options.forEach(option => option.disabled = true);
+    try { await runCloudAction("trusted-adult-add", { teacherId: button.dataset.teacherId }); }
+    finally { options.forEach(option => option.disabled = false); }
+  } else if (action === "request-remove-trusted-adult") {
+    trustedAdultPickerOpen = false;
+    const picker = viewRoot.querySelector(".trusted-adult-picker");
+    if (picker) picker.open = false;
+    const dialog = document.querySelector("#trusted-adult-remove-dialog");
+    dialog.dataset.teacherId = button.dataset.teacherId;
+    dialog.querySelector("form").reset();
+    dialog.querySelector("[data-trusted-remove-error]").textContent = "";
+    dialog.querySelector("[data-trusted-remove-name]").textContent = `Remove ${getTeacher(button.dataset.teacherId)?.name ?? "this person"} from your trusted adults?`;
+    dialog.showModal();
   } else if (action === "urgent-support") {
     const sent = await runCloudAction("urgent-support");
-    if (sent) showToast("Your support request was sent to supervising staff and your trusted adult, if selected.");
+    if (sent) showToast("Your support request was sent to supervising staff and your trusted adults.");
   } else if (action === "open-support-profile") {
     setView("students", { studentId: button.dataset.studentId });
   } else if (action === "follow-up-goal") {
@@ -315,10 +332,25 @@ async function handleSupportSubmit(form) {
   finally { cloudBusy = false; button.disabled = false; }
 }
 
+const trustedRemovalDialog = document.querySelector("#trusted-adult-remove-dialog");
+trustedRemovalDialog.addEventListener("click", event => {
+  if (event.target === trustedRemovalDialog || event.target.closest("[data-close-trusted-remove]")) trustedRemovalDialog.close();
+});
+document.querySelector("#trusted-adult-remove-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const form = event.target, button = form.querySelector('[type="submit"]');
+  button.disabled = true;
+  const saved = await runCloudAction("trusted-adult-remove", { teacherId: trustedRemovalDialog.dataset.teacherId, reason: new FormData(form).get("reason") });
+  button.disabled = false;
+  if (saved) { trustedRemovalDialog.close(); viewRoot.querySelector(".trusted-adult-picker summary")?.focus(); }
+  else form.querySelector("[data-trusted-remove-error]").textContent = "The change could not be saved. Please try again.";
+});
+
 function readCheckIns(form) {
   return [...form.querySelectorAll("[data-check-in-row]")].map(row => ({ ...(row.dataset.checkInId ? { id: row.dataset.checkInId } : {}), date: row.querySelector("input").value }));
 }
 function openSupportRecord(studentId, recordId = "") {
+  profileCoinFilter = "all";
   profileConcernFilters.behavior = profileConcernFilters.academic = profileConcernFilters.sel = "all";
   setView("students", { studentId });
   requestAnimationFrame(() => {
@@ -1023,7 +1055,7 @@ function renderSchoolCalendar() {
     <section class="calendar-section" aria-labelledby="school-calendar-title">
       <div class="calendar-heading">
         <div>
-          <h2 id="school-calendar-title">School calendar</h2>
+          <h2 id="school-calendar-title">${getActiveStudent() ? "My calendar" : "School calendar"}</h2>
         </div>
         ${canOpenCalendarEventCreator() ? '<button class="calendar-create-trigger" type="button" data-action="open-calendar-create"><span aria-hidden="true">＋</span>Create event</button>' : ""}
         <div class="calendar-toolbar">
@@ -1062,11 +1094,6 @@ function renderCupIcon() {
 function renderTopbarHouseScores() {
   const totals = getHouseTotals(state);
   const activeStudent = getActiveStudent();
-  const hasTodayCheckIn = activeStudent
-    ? (state.selCheckIns ?? []).some(
-        (checkIn) => checkIn.studentId === activeStudent.id && checkIn.date === getTodayInputValue()
-      )
-    : false;
   const houses = HOUSES.map(
     (house) => `
       <button
@@ -1082,24 +1109,22 @@ function renderTopbarHouseScores() {
       </button>
     `
   ).join("");
-  const studentTools = activeStudent ? `
-    <button class="sel-check-in-trigger ${hasTodayCheckIn ? "is-complete" : ""}" type="button" data-action="open-sel-check-in">
-      <span aria-hidden="true">${hasTodayCheckIn ? "✓" : "♡"}</span>
-      ${hasTodayCheckIn ? "Check-in complete" : "Daily SEL check-in"}
-    </button>
-
-  ` : "";
-  topbarHouseScores.innerHTML = houses + studentTools + `<button type="button" class="mobile-logout-icon" data-action="logout" aria-label="Log out" title="Log out"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 5H4v14h5M13 7l5 5-5 5M8 12h10" /></svg></button>`;
+  const logout = `<button type="button" class="mobile-logout-icon" data-action="logout" aria-label="Log out" title="Log out"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 5H4v14h5M13 7l5 5-5 5M8 12h10" /></svg></button>`;
+  if (activeStudent) {
+    const house = getHouse(activeStudent.houseId);
+    topbarHouseScores.innerHTML = `<button type="button" class="student-header-urgent" data-action="urgent-support">URGENT<br />Need support</button><button class="topbar-house-score student-header-house" type="button" data-action="show-house-leaders" data-house-id="${house.id}" aria-label="${house.name}, ${totals[house.id]} points. Open House ranking."><img src="${house.image}" alt="" /><span>${totals[house.id].toLocaleString()}</span></button><div class="student-header-right"><button class="sel-check-in-trigger" type="button" data-action="open-sel-check-in">Daily SEL check-in</button>${logout}</div>`;
+    document.querySelector("#sidebar-student-identity").innerHTML = `<figure aria-label="${escapeHtml(activeStudent.name)}, Grade ${activeStudent.grade}">${renderCrestVisual(activeStudent)}</figure>`;
+  } else {
+    topbarHouseScores.innerHTML = houses + logout;
+    document.querySelector("#sidebar-student-identity").innerHTML = "";
+  }
   document.querySelector("#sidebar-house-scores").innerHTML = houses;
-  document.querySelector("#sidebar-student-tools").innerHTML = studentTools;
+  document.querySelector("#sidebar-student-tools").innerHTML = "";
 }
 
 function renderSelCheckInModal() {
   const student = getActiveStudent();
   if (!student || !selCheckInOpen) return "";
-  const existing = getStudentSelCheckIns(state, student.id).find(
-    (checkIn) => checkIn.date === getTodayInputValue()
-  );
   const ratingLabels = ["Very difficult", "Difficult", "Okay", "Good", "Great"];
   return `
     <div class="modal-backdrop" data-action="close-sel-check-in">
@@ -1108,7 +1133,6 @@ function renderSelCheckInModal() {
         <div class="modal-heading">
           <span class="privacy-badge">Private reflection</span>
           <h2 id="sel-check-in-title">How do you feel today?</h2>
-          <p>Take one minute to notice how you are doing.</p>
         </div>
         <form id="sel-check-in-form" class="sel-check-in-form">
           <fieldset>
@@ -1116,14 +1140,14 @@ function renderSelCheckInModal() {
             <div class="mood-rating-grid">
               ${ratingLabels.map((label, index) => {
                 const rating = index + 1;
-                return `<label><input type="radio" name="rating" value="${rating}" ${existing?.rating === rating ? "checked" : ""} required /><span><strong>${rating}</strong><small>${label}</small></span></label>`;
+                return `<label><input type="radio" name="rating" value="${rating}" required /><span><strong>${rating}</strong><small>${label}</small></span></label>`;
               }).join("")}
             </div>
           </fieldset>
           <label>Why? What could you do to feel better?
-            <textarea name="reflection" rows="4" maxlength="500" required placeholder="A short answer is enough.">${escapeHtml(existing?.reflection ?? "")}</textarea>
+            <textarea name="reflection" rows="4" maxlength="500" required></textarea>
           </label>
-          <button class="primary-button" type="submit">Save today’s check-in</button>
+          <button class="primary-button" type="submit">Save check-in</button>
         </form>
       </section>
     </div>
@@ -1164,21 +1188,12 @@ function renderDashboard() {
   const totals = getHouseTotals(state);
   const activeStudent = getActiveStudent();
   if (activeStudent) {
-    const house = getHouse(activeStudent.houseId);
-    const isHouseLeader = (state.leadershipAssignments?.houseLeaders?.[activeStudent.houseId] ?? []).includes(activeStudent.id);
-    const labs = (state.leadershipAssignments?.labs ?? []).filter((lab) => lab.leaderIds.includes(activeStudent.id));
     return `
       <div class="page student-dashboard">
-        ${renderPageHeader("Dashboard", `${escapeHtml(activeStudent.name)} · Grade ${activeStudent.grade}`)}
-        <section class="student-calendar-identity panel" style="--house-color:${house.color}">
-          <img src="${house.image}" alt="${house.name} logo" />
-          <div><span>Your house</span><h2>${house.name}</h2><p>${totals[house.id].toLocaleString()} house points</p></div>
-          <div class="student-access-badges">${isHouseLeader ? "<span>House Captain</span>" : ""}${labs.map((lab) => `<span>${escapeHtml(lab.name)}</span>`).join("")}</div>
-        </section>
+        ${renderPageHeader("Dashboard", "")}
         ${renderSchoolCalendar()}
         ${cloudEnabled ? renderSupportNotifications(state, activeUser, escapeHtml) : ""}
         ${cloudEnabled ? renderSupportProfile(state, activeUser, activeStudent, escapeHtml, { dashboard: true }) : ""}
-        ${renderSelCheckInModal()}
       </div>
     `;
   }
@@ -1965,7 +1980,7 @@ function formatStudentCount(count) {
 function renderStudents() {
   if (activeUser?.type === "student") {
     const student = getActiveStudent();
-    return `<div class="page">${renderPageHeader("My profile", "")}<section class="panel"><div class="profile-heading"><img src="${getHouse(student.houseId).image}" alt=""/><div><span>Grade ${student.grade} · ${getHouse(student.houseId).name}</span><h2>${escapeHtml(student.name)}</h2></div><div class="profile-total"><strong>${getStudentTotal(state,student.id)}</strong><span>points</span></div></div>${renderStudentCoinTable(student)}${renderSupportProfile(state, activeUser, student, escapeHtml)}<section class="profile-record-section"><h3>Behavior notices</h3>${state.behaviorConcerns.map(item => `<article><h4>${escapeHtml(item.title)}</h4><time>${formatDateOnly(item.incidentDate)}</time><p>${escapeHtml(item.description)}</p>${renderConcernAttachment(item, "record")}</article>`).join("") || '<p>No behavior notices.</p>'}</section></section></div>`;
+    return `<div class="page">${renderPageHeader("My profile", "")}<section class="panel"><div class="profile-heading student-own-profile-heading"><img src="${getHouse(student.houseId).image}" alt="${getHouse(student.houseId).name}"/>${renderTrustedAdults(state, activeUser, student, escapeHtml, { pickerOpen: trustedAdultPickerOpen })}<div class="profile-total"><strong>${getStudentTotal(state,student.id)}</strong><span>points</span></div></div>${renderStudentCoinTable(student)}<section class="profile-record-section"><h3>Behavior notices</h3>${state.behaviorConcerns.map(item => `<article id="concern-${item.id}"><h4>${escapeHtml(item.title)}</h4><time>${formatDateOnly(item.incidentDate)}</time><p>${escapeHtml(item.description)}</p>${renderConcernAttachment(item, "record")}</article>`).join("") || '<p>No behavior notices.</p>'}</section>${renderSupportProfile(state, activeUser, student, escapeHtml)}</section></div>`;
   }
   const filteredStudents = getFilteredStudents();
 
@@ -2215,7 +2230,7 @@ function renderSelConcernsTable(student) {
         <table class="record-table concern-history-table sel-history-table">
           <thead><tr><th scope="col">Observed</th><th scope="col">SEL record</th><th scope="col">Published</th><th scope="col">Author</th><th scope="col">Access</th></tr></thead>
           <tbody>
-            ${checkIns.map(checkIn => `<tr class="sel-check-in-record"><td><time datetime="${checkIn.date}">${formatDateOnly(checkIn.date)}</time></td><td><strong>Daily check-in · ${checkIn.rating}/5</strong><p class="record-description">${escapeHtml(checkIn.reflection)}</p></td><td>${formatDateTime(checkIn.updatedAt || checkIn.createdAt || `${checkIn.date}T00:00:00+08:00`)}</td><td>${escapeHtml(student.name)}</td><td>Student check-in</td></tr>`).join("")}
+            ${checkIns.map(checkIn => `<tr class="sel-check-in-record"><td><time datetime="${checkIn.publishedAt || checkIn.date}">${checkIn.publishedAt ? formatDateTime(checkIn.publishedAt) : formatDateOnly(checkIn.date)}</time></td><td><strong>Daily check-in · ${checkIn.rating}/5</strong><p class="record-description">${escapeHtml(checkIn.reflection)}</p></td><td>${formatDateTime(checkIn.publishedAt || checkIn.updatedAt || checkIn.createdAt || `${checkIn.date}T00:00:00+08:00`)}</td><td>${escapeHtml(student.name)}</td><td>Student check-in</td></tr>`).join("")}
             ${concerns.length ? concerns.map((concern) => {
               const author = getTeacher(concern.teacherId);
               const options = concern.concernIds.map((id) => SEL_CONCERN_OPTIONS.find((option) => option.id === id)).filter(Boolean).map(option => ({ ...option, tier: concern.tier ?? option.tier }));
@@ -2465,6 +2480,12 @@ function render() {
     topbarHouseScores.innerHTML = "";
     document.querySelector("#sidebar-house-scores").innerHTML = "";
     document.querySelector("#sidebar-student-tools").innerHTML = "";
+    document.querySelector("#sidebar-student-identity").innerHTML = "";
+    document.querySelector("#trusted-adult-remove-dialog").close();
+    document.querySelector("#trusted-adult-remove-form").reset();
+    document.querySelector("[data-trusted-remove-name]").textContent = "";
+    trustedAdultPickerOpen = false;
+    selCheckInOpen = false;
     return;
   }
 
@@ -2515,7 +2536,7 @@ function render() {
   else if (activeView === "administration") viewRoot.innerHTML = renderAdministration();
   else viewRoot.innerHTML = renderDashboard();
 
-  viewRoot.insertAdjacentHTML("beforeend", renderRecordEditModal());
+  viewRoot.insertAdjacentHTML("beforeend", renderRecordEditModal() + renderSelCheckInModal());
   const pushStatus = viewRoot.querySelector("[data-push-status]");
   if (pushStatus) pushStatus.textContent = phonePushStatus;
   if (cloudEnabled && ["behavior-concern", "academic-concern", "sel-concern"].includes(activeView)) {
@@ -2878,6 +2899,7 @@ function positionDeductionPicker() {
 }
 viewRoot.addEventListener("toggle", event => {
   if (event.target.matches(".deduction-value-picker[open]")) positionDeductionPicker();
+  if (event.target.matches(".trusted-adult-picker")) trustedAdultPickerOpen = event.target.open;
 }, true);
 window.addEventListener("resize", positionDeductionPicker);
 
@@ -3334,7 +3356,7 @@ viewRoot.addEventListener("submit", async (event) => {
       await saveState();
       selCheckInOpen = false;
       render();
-      showToast("Today’s check-in is saved.");
+      showToast("Check-in saved.");
     } catch (error) {
       showToast(error.message);
     }
@@ -3364,19 +3386,27 @@ window.addEventListener("school-session-expired", () => {
 });
 
 if (cloudEnabled && hasCloudSession()) {
-  cloudCall("load").then(result => { applyCloudResult(result); render(); }).catch(error => { loginError.textContent = error.message; });
+  cloudCall("load").then(result => { if (!hasCloudSession() || (activeUser && activeUser.id !== result.user.id)) return; applyCloudResult(result); render(); }).catch(error => { loginError.textContent = error.message; });
+}
+let schoolRefreshInFlight = false;
+async function refreshSchoolState() {
+  if (!activeUser || cloudBusy || schoolRefreshInFlight || selCheckInOpen || trustedAdultPickerOpen || mustChangePassword || document.querySelector("dialog[open]") || document.activeElement?.matches("input, textarea, select")) return;
+  const accountId = activeUser.id, snapshot = cloudSnapshot;
+  schoolRefreshInFlight = true;
+  try {
+    const result = await cloudCall("load");
+    if (!hasCloudSession() || activeUser?.id !== accountId || cloudBusy || cloudSnapshot !== snapshot) return;
+    if (JSON.stringify(result.state) !== JSON.stringify(cloudSnapshot)) { applyCloudResult(result); render(); }
+  } catch { /* Preserve the current view during temporary network failures. */ }
+  finally { schoolRefreshInFlight = false; }
 }
 if (cloudEnabled) {
-  setInterval(async () => {
-    if (!activeUser || cloudBusy || mustChangePassword || document.querySelector("dialog[open]") || document.activeElement?.matches("input, textarea, select")) return;
-    try {
-      const result = await cloudCall("load");
-      if (JSON.stringify(result.state) !== JSON.stringify(cloudSnapshot)) { applyCloudResult(result); render(); }
-    } catch { /* Preserve the current view during temporary network failures. */ }
-  }, 30_000);
+  setInterval(refreshSchoolState, 30_000);
+  window.addEventListener("focus", refreshSchoolState);
 }
+
 
 initializePhonePush(() => activeUser, noticeId => {
   const n = state.notifications?.find(item => item.id === noticeId);
-  if (n && activeUser && !mustChangePassword) openSupportRecord(n.studentId, n.goalId ? `${n.kind.includes("reflection") || n.kind === "goal-final-review" ? "reflection" : "goal"}-${n.goalId}` : n.concernId || n.concernIds?.length ? `concern-${n.concernId ?? n.concernIds.at(-1)}` : "");
+  if (n && activeUser && !mustChangePassword) openSupportRecord(n.studentId, n.goalId ? `${n.kind.includes("reflection") || n.kind === "goal-final-review" ? "reflection" : "goal"}-${n.goalId}` : n.awardId ? `award-${n.awardId}` : n.concernId || n.concernIds?.length ? `concern-${n.concernId ?? n.concernIds.at(-1)}` : "");
 });

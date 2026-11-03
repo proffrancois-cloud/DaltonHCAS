@@ -88,6 +88,7 @@
           </button>
         </nav>
 
+        <div id="sidebar-student-identity" class="sidebar-student-identity"></div>
         <div class="sidebar-account">
           <img class="teacher-avatar" id="teacher-avatar" src="assets/dalton-plan-house-teams.jpg" alt="" />
           <div><strong id="teacher-name"></strong><span id="account-role">Teacher</span></div>
@@ -143,6 +144,11 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <dialog id="trusted-adult-remove-dialog" class="trusted-adult-remove-dialog" aria-labelledby="trusted-remove-title">
+      <header><h2 id="trusted-remove-title">Remove trusted adult?</h2><button type="button" class="dialog-close" data-close-trusted-remove aria-label="Cancel removal">×</button></header>
+      <p data-trusted-remove-name></p>
+      <form id="trusted-adult-remove-form"><label>Why? <small>Optional</small><textarea name="reason" maxlength="2000" rows="3"></textarea></label><p role="alert" data-trusted-remove-error></p><footer><button type="button" class="text-button" data-close-trusted-remove>Cancel</button><button type="submit" class="secondary-button">Confirm removal</button></footer></form>
+    </dialog>
     <dialog id="house-ranking-dialog" class="house-ranking-dialog" aria-labelledby="house-ranking-title"></dialog>
     <dialog id="app-install-dialog" class="app-install-dialog" aria-labelledby="app-install-title">
       <header><h2 id="app-install-title">Install DaltonHCAS</h2><button type="button" class="dialog-close" data-close-install aria-label="Close installation instructions">×</button></header>

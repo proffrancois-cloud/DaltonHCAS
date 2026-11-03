@@ -62,7 +62,28 @@ function adminOnly(actor) {
 }
 
 export function applySchoolCommand(state, actor, action, p, now = Date.now()) {
-  return recordActivity(state, applyCommand(state, actor, action, p, now), actor, action, p, now);
+  const next = applyCommand(state, actor, action, p, now);
+  return recordActivity(state, recordStudentUpdates(state, next, action, p, now), actor, action, p, now);
+}
+
+function recordStudentUpdates(before, next, action, payload, now) {
+  const alerts = [];
+  const stamp = new Date(now).toISOString();
+  const trusted = studentId => support.trustedAdultIds(next.students.find(s => s.id === studentId) ?? {}).filter(id => next.teachers.some(t => t.id === id));
+  if (action === "award-add") {
+    const oldIds = new Set(before.awards.map(a => a.id));
+    for (const award of next.awards.filter(a => !oldIds.has(a.id))) alerts.push({ key: `coin-received:${award.id}`, kind: "coin-received", studentId: award.studentId, awardId: award.id, points: award.points, valueIds: data.getAwardValueIds(award), recipientIds: [...new Set([award.studentId, ...trusted(award.studentId)])], createdAt: stamp });
+  }
+  if (action === "concern-add") {
+    const concern = next[`${payload.type}Concerns`].at(-1);
+    const existingStaff = followup.concernRecipients(next, concern);
+    for (const studentId of concern.studentIds) {
+      const recipientIds = [...new Set([...(payload.type === "behavior" ? [studentId] : []), ...trusted(studentId).filter(id => !existingStaff.includes(id))])];
+      if (recipientIds.length) alerts.push({ key: `student-concern:${concern.id}:${studentId}`, kind: "student-concern", studentId, concernType: payload.type, concernId: concern.id, recipientIds, createdAt: stamp });
+    }
+  }
+  if (!alerts.length) return next;
+  return { ...next, notifications: [...(next.notifications ?? []), ...alerts.map(alert => ({ ...alert, id: crypto.randomUUID(), readBy: {} }))] };
 }
 
 function applyCommand(state, actor, action, p, now) {
@@ -131,11 +152,17 @@ function applyCommand(state, actor, action, p, now) {
     }
     case "concern-response": case "goal-schedule": case "goal-reflection": case "reflection-reminder":
       return followup.applyFollowupCommand(state, actor, action, p, iso);
-    case "trusted-adult": {
+    case "trusted-adult": case "trusted-adult-add": case "trusted-adult-remove": {
       const student = state.students.find(item => item.id === actor.id);
-      if (!student) throw new Error("Student account required");
-      const updated = support.setTrustedAdult(actor, student, p.teacherId, state.teachers);
-      return { ...state, students: state.students.map(item => item.id === updated.id ? updated : item) };
+      if (!student || actor.type !== "student") throw new Error("Student account required");
+      const oldIds = support.trustedAdultIds(student);
+      const ids = action === "trusted-adult-add" ? [...oldIds, p.teacherId] : action === "trusted-adult-remove" ? oldIds.filter(id => id !== p.teacherId) : p.teacherIds ?? (p.teacherId ? [p.teacherId] : []);
+      const updated = support.setTrustedAdults(actor, student, ids, state.teachers);
+      const removed = oldIds.filter(id => !support.trustedAdultIds(updated).includes(id));
+      const reason = String(p.reason ?? "").trim();
+      if (reason.length > 2000) throw new Error("Use up to 2000 characters for the optional reason");
+      const notices = removed.length ? [{ id: crypto.randomUUID(), key: `trusted-adult-removed:${student.id}:${crypto.randomUUID()}`, kind: "trusted-adult-removed", studentId: student.id, removedAdultIds: removed, reason, recipientIds: followup.supervisors(state), createdAt: iso, readBy: {} }] : [];
+      return { ...state, students: state.students.map(item => item.id === updated.id ? updated : item), notifications: [...(state.notifications ?? []), ...notices] };
     }
     case "urgent-support": {
       const student = state.students.find(item => item.id === actor.id);

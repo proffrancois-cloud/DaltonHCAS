@@ -146,17 +146,24 @@ export function collectSupportAlerts({ concerns = [], goals = [], staff = [], to
 
 export function requestUrgentSupport(actor, student, { id, now = new Date().toISOString(), staff = [] }) {
   if (actor?.type !== "student" || actor.id !== student.id) throw new Error("Students can request support only for themselves");
-  const recipients = staff.filter((person) => SUPERVISOR_ROLES.has(person.role) || person.id === student.trustedAdultId);
+  const recipients = staff.filter((person) => SUPERVISOR_ROLES.has(person.role) || trustedAdultIds(student).includes(person.id));
   return {
     key: `urgent:${id}`, kind: "urgent-support", title: "URGENT - Need support",
     studentId: student.id, recipientIds: [...new Set(recipients.map((person) => person.id))], createdAt: now
   };
 }
 
+export function trustedAdultIds(student) {
+  return [...new Set(Array.isArray(student.trustedAdultIds) ? student.trustedAdultIds : [student.trustedAdultId].filter(Boolean))];
+}
+export function setTrustedAdults(actor, student, ids, staff) {
+  if (actor?.type !== "student" || actor.id !== student.id) throw new Error("Only the student can choose their trusted adults");
+  if (!Array.isArray(ids) || ids.some(id => !staff.some(person => person.id === id))) throw new Error("Choose existing members of staff");
+  const selected = [...new Set(ids)];
+  return { ...student, trustedAdultIds: selected, trustedAdultId: selected[0] ?? null };
+}
 export function setTrustedAdult(actor, student, teacherId, staff) {
-  if (actor?.type !== "student" || actor.id !== student.id) throw new Error("Only the student can choose their trusted adult");
-  if (teacherId && !staff.some((person) => person.id === teacherId)) throw new Error("Choose an existing member of staff");
-  return { ...student, trustedAdultId: teacherId || null };
+  return setTrustedAdults(actor, student, teacherId ? [teacherId] : [], staff);
 }
 
 export function markSupportNotificationRead(actor, notification, now = new Date().toISOString()) {

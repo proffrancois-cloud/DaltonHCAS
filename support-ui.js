@@ -1,4 +1,5 @@
-import { SMART_FIELDS, isSupervisor } from "./support-rules.js";
+import { SMART_FIELDS, isSupervisor, trustedAdultIds } from "./support-rules.js";
+import { alphabeticStaff } from "./activity.js";
 import { goalFollowup, scheduleCreator } from "./followup-ui.js";
 
 export function renderIepHeart(state, actor, student, esc) {
@@ -21,6 +22,15 @@ export function renderSupportDocuments(state, actor, student, esc) {
   </section>`;
 }
 
+export function renderTrustedAdults(state, actor, student, esc, { pickerOpen = false } = {}) {
+  const ids = trustedAdultIds(student), own = actor?.type === "student" && actor.id === student.id;
+  const staff = alphabeticStaff(state.teachers);
+  return `<div class="profile-trusted-adults"><h3>Trusted adults</h3><div class="trusted-adult-chips">${ids.map(id => {
+    const person = staff.find(t => t.id === id);
+    return person ? `<span class="trusted-adult-chip">${esc(person.name)}${own ? `<button type="button" data-action="request-remove-trusted-adult" data-teacher-id="${esc(id)}" aria-label="Remove ${esc(person.name)} from trusted adults">×</button>` : ""}</span>` : "";
+  }).join("")}</div>${own ? `<details class="trusted-adult-picker" ${pickerOpen ? "open" : ""}><summary>Add trusted adults</summary><div>${staff.filter(t => !ids.includes(t.id)).map(t => `<button type="button" data-action="add-trusted-adult" data-teacher-id="${esc(t.id)}">${esc(t.name)}</button>`).join("") || '<span>All staff selected</span>'}</div></details>` : ""}</div>`;
+}
+
 export function renderSupportProfile(state, actor, student, esc, { dashboard = false } = {}) {
   const supervisor = isSupervisor(actor), own = actor?.type === "student" && actor.id === student.id;
   if (!actor || (!own && actor.type !== "teacher")) return "";
@@ -29,7 +39,7 @@ export function renderSupportProfile(state, actor, student, esc, { dashboard = f
   const concerns = ["behavior", "academic", "sel"].flatMap(type => (state[`${type}Concerns`] ?? []).filter(item => item.studentIds.includes(student.id)).map(item => ({ ...item, type })));
   return `
     <section class="profile-record-section support-section" id="student-smart-goals">
-      <div class="record-section-heading"><div><h3>${dashboard ? "Your active SMART goals" : "SMART goals & plans"}</h3><span>Visible to this student and staff</span></div></div>
+      <div class="record-section-heading"><div><h3>${dashboard ? "Your active SMART goals" : "SMART goals & plans"}</h3></div></div>
       ${!goals.length ? '<p class="muted-cell">No active goals yet.</p>' : goals.map(goal => `<article class="smart-goal" id="goal-${esc(goal.id)}">
         <div class="smart-goal-heading"><div><span class="goal-origin">${goal.origin === "student" ? "Student-created goal" : "Supervisor support plan"}</span><h4>${esc(goal.title)}</h4></div><span class="goal-status ${goal.status === "achieved" ? "is-achieved" : ""}">${statusLabel[goal.status] ?? esc(goal.status)}</span></div>
         <p class="goal-meta">Review date: <time>${esc(goal.dueDate)}</time> · Published ${esc(new Date(goal.createdAt).toLocaleDateString("en-GB"))}</p>
@@ -55,6 +65,6 @@ export function renderSupportProfile(state, actor, student, esc, { dashboard = f
         ${Object.entries(SMART_FIELDS).map(([key, rubric]) => `<label>${key.toUpperCase()} · ${rubric.title}<textarea name="${key}" rows="2" placeholder="${esc(rubric.definition)}" maxlength="4000" ${own ? "required" : ""}></textarea></label>${supervisor ? `<label class="checkbox-label"><input type="checkbox" name="studentEditableFields" value="${key}" /> Allow student to complete this field once</label>` : ""}`).join("")}
         <label>Final review date<input type="date" name="dueDate" required /></label>${scheduleCreator(state, actor, esc)}<button class="primary-button" type="submit">Publish SMART goal</button><p class="support-error" role="alert"></p></form></details>` : ""}
     </section>
-    ${own && !dashboard ? `<section class="profile-record-section support-section"><h3>Your trusted adult</h3><p>Choose a staff member you prefer to talk to. You can change this at any time.</p><form data-support-form="trusted-adult"><label>Adult of reference<select name="teacherId"><option value="">No preference</option>${state.teachers.map(teacher => `<option value="${esc(teacher.id)}" ${student.trustedAdultId === teacher.id ? "selected" : ""}>${esc(teacher.name)}</option>`).join("")}</select></label><button class="secondary-button" type="submit">Save preference</button><p class="support-error" role="alert"></p></form><button type="button" class="urgent-support-button" data-action="urgent-support">URGENT - Need support</button><p class="field-help">This alerts supervising staff and your preferred adult in their dashboard. If you need immediate help, speak directly to an adult now.</p></section>` : ""}
+
   `;
 }

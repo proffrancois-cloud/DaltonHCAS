@@ -916,9 +916,9 @@ export function addSelCheckIn(state, user, payload, now = Date.now()) {
   const rating = Number(payload.rating);
   if (![1, 2, 3, 4, 5].includes(rating)) throw new Error("Choose how you feel today");
   const reflection = normalizeRequiredText(payload.reflection, 500, "Daily reflection");
-  const date = toLocalDateKey(new Date(now).toISOString());
+  const date = schoolDay.format(new Date(now));
   const checkIn = {
-    id: `sel-check-in-${student.id}-${date}`,
+    id: `sel-check-in-${student.id}-${now}-${crypto.randomUUID()}`,
     studentId: student.id,
     date,
     rating,
@@ -927,12 +927,7 @@ export function addSelCheckIn(state, user, payload, now = Date.now()) {
   };
   return {
     ...state,
-    selCheckIns: [
-      ...(state.selCheckIns ?? []).filter(
-        (item) => !(item.studentId === student.id && item.date === date)
-      ),
-      checkIn
-    ]
+    selCheckIns: [...(state.selCheckIns ?? []), checkIn]
   };
 }
 
