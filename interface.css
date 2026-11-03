@@ -499,9 +499,36 @@ legend > span, .concern-section > legend > span { width: 22px; height: 22px; bac
 .editor-picker-dialog .optional-editor-grid > label[hidden] { display: none; }
 .editor-picker-dialog footer { display: flex; justify-content: end; margin-top: 14px; }
 .no-filter-results { min-height: 0; padding: 10px 12px; background: none; border: 0; border-radius: 0; }
+.dashboard-layout { grid-template-columns: minmax(0, 1fr); }
+.dashboard-layout > .scoreboard-panel { height: auto; }
+.student-list-panel[hidden], .student-ranking-dates[hidden], .conditional-field[hidden] { display: none; }
+.student-browse-controls > .search-field { grid-row: 1 / 4; }
+.student-browse-controls > .value-filters { grid-column: 2; grid-row: 3; }
+.value-filters { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.value-filters button { flex: none; border: 1px solid var(--line); border-radius: 5px; background: white; color: var(--navy); padding: 6px 9px; font: inherit; font-size: 12px; min-height: 32px; cursor: pointer; }
+.value-filters button.is-selected { background: var(--school-gold); border-color: var(--school-gold); color: white; }
+.student-ranking-dates { grid-column: 2; display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+.student-ranking-dates label { display: grid; gap: 4px; color: var(--muted); font-size: 11px; }
+.student-ranking-dates input { padding: 6px; border: 1px solid var(--line); border-radius: 5px; background: white; color: var(--ink); }
+.student-crest { position: relative; }
+.student-browser-rank { position: absolute; left: 3px; top: 2px; font-size: 11px; color: var(--muted); }
+.private-support-plans { margin-top: 12px; }
+.private-support-plans > details { margin-top: 8px; }
+.followup-options { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.followup-options h4 { margin: 0 0 6px; }
+.mobile-logout-icon { display: none; }
 @media (max-width: 1050px) { .dashboard-overview { grid-template-columns: 1fr; } }
 @media (max-width: 759px) {
-  .topbar { display: grid; }
+  .topbar { display: grid; grid-template-columns: minmax(0, 1fr); height: auto; min-height: 58px; padding-block: 7px; }
+  .topbar-actions { grid-column: 1; padding-left: 44px; }
+  .topbar-actions { width: 100%; }
+  .topbar-house-scores { width: 100%; justify-content: flex-end; flex-wrap: wrap; }
+  .topbar-house-scores .sel-check-in-trigger { order: 2; flex-basis: 100%; }
+  .mobile-logout-icon { order: 1; display: grid; place-items: center; width: 40px; height: 40px; padding: 8px; margin-left: 6px; flex: none; border: 0; border-radius: 6px; background: white; color: var(--navy); cursor: pointer; }
+  .mobile-logout-icon svg { width: 24px; height: 24px; }
+  .mobile-staff-account { display: none !important; }
+  .value-filters button { min-height: 40px; }
+  .student-ranking-dates { grid-column: 1 / -1; }
   .page { padding: 14px 12px 32px; }
   .dashboard-overview { gap: 12px; }
   .activity-timeline { max-height: 390px; }

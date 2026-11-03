@@ -29,3 +29,25 @@ test("shared crests keep individual SVG references and escape names and point la
   assert.match(first, /&lt;img src=&quot;x&quot;>/);
   assert.match(first, /student-points-badge">-20/);
 });
+
+test("Students combines multi-select categories and ranks selected 7Cs over inclusive Taipei dates", async () => {
+  const { browseStudents, toggleFilterValues } = await import("../student-ui.js");
+  const houses=[{id:"red",name:"Red Phoenix"},{id:"white",name:"White Tiger"}];
+  const values=[{id:"community",name:"Community"},{id:"compassion",name:"Compassion"}];
+  const state={students,awards:[
+    {studentId:"a",valueId:"community",points:20,createdAt:"2026-11-01T16:00:00Z"},
+    {studentId:"b",valueId:"compassion",points:40,createdAt:"2026-11-02T15:59:59Z"},
+    {studentId:"b",valueId:"compassion",points:-10,createdAt:"2026-11-02T15:59:59Z"},
+    {studentId:"c",valueId:"community",points:50,createdAt:"2026-11-02T16:00:00Z"}
+  ]};
+  const filters={query:"",house:[],grade:[],values:[],from:"",to:""};
+  assert.deepEqual(browseStudents(state,filters,houses,values).students,[]);
+  const result=browseStudents(state,{...filters,house:["red","white"],grade:["9","10"],values:["community","compassion"],from:"2026-11-02",to:"2026-11-02"},houses,values);
+  assert.equal(result.ranked,true);
+  assert.deepEqual(result.students.map(s=>[s.id,s.points]),[["b",30],["a",20]]);
+  assert.deepEqual(browseStudents(state,{...filters,query:"white"},houses,values).students.map(s=>s.id),["b"]);
+  assert.deepEqual(browseStudents(state,{...filters,query:"Community"},houses,values).students.map(s=>s.id),["c","a"]);
+  assert.deepEqual(toggleFilterValues(["all"],"red"),["red"]);
+  assert.deepEqual(toggleFilterValues(["red","white"],"red"),["white"]);
+  assert.deepEqual(toggleFilterValues(["all"],"all"),[]);
+});

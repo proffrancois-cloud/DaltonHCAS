@@ -412,11 +412,11 @@ test("staff statuses enforce permanent and delegated record editing access", () 
     superAdmin.id
   ]);
   const award = state.awards.at(-1);
-  assert.deepEqual(award.editorIds, [delegated.id]);
+  assert.deepEqual(award.editorIds, []);
   assert.equal(canEditStudentRecord(state, "david", award), true);
   assert.equal(canEditStudentRecord(state, superAdmin.id, award), true);
   assert.equal(canEditStudentRecord(state, supervising.id, award), true);
-  assert.equal(canEditStudentRecord(state, delegated.id, award), true);
+  assert.equal(canEditStudentRecord(state, delegated.id, { ...award, editorIds: [delegated.id] }), false);
   assert.equal(canEditStudentRecord(state, leader.id, award), false);
   assert.equal(getTeacherPermissions(supervising).canEditAllStudentRecords, true);
   assert.equal(getTeacherPermissions(supervising).canManageAccounts, false);

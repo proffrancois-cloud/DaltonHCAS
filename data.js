@@ -311,7 +311,7 @@ export function canEditStudentRecord(state, teacherId, record) {
   return Boolean(
     record.teacherId === teacherId ||
       getTeacherPermissions(teacher).canEditAllStudentRecords ||
-      record.editorIds?.includes(teacherId)
+      (!(record.studentId && "points" in record) && record.editorIds?.includes(teacherId))
   );
 }
 
@@ -527,7 +527,7 @@ export function addAward(
         teacherId,
         points,
         comment: normalizedComment,
-        editorIds: normalizeRecordEditorIds(state, editorIds, teacherId),
+        editorIds: [],
         createdAt: new Date(now).toISOString()
       }
     ]
@@ -578,11 +578,7 @@ export function updateAward(state, awardId, teacherId, changes, now = Date.now()
             valueId,
             points,
             comment,
-            editorIds: normalizeRecordEditorIds(
-              state,
-              changes.editorIds ?? item.editorIds,
-              item.teacherId
-            ),
+            editorIds: [],
             updatedAt: new Date(now).toISOString(),
             updatedBy: teacherId
           }

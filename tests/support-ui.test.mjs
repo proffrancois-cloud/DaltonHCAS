@@ -1,0 +1,21 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { renderSupportDocuments, renderIepHeart } from "../support-ui.js";
+import { createInitialState } from "../data.js";
+import { actorForAccount, applySchoolCommand, visibleState } from "../support-server.js";
+const esc=value=>String(value).replaceAll("<","&lt;");
+test("private support information is editable only by supervisors and remains absent in student responses",()=>{
+  let state=createInitialState();
+  const student=state.students[0], regular=actorForAccount(state,"david"), admin=actorForAccount(state,"francois");
+  assert.equal(renderSupportDocuments(state,regular,student,esc),"");
+  assert.match(renderSupportDocuments(state,admin,student,esc),/support-plan-save/);
+  assert.throws(()=>applySchoolCommand(state,regular,"support-plan-save",{studentId:student.id,info:"Private accommodation"}));
+  state=applySchoolCommand(state,admin,"support-plan-save",{studentId:student.id,info:"Private accommodation"});
+  assert.match(renderSupportDocuments(state,regular,student,esc),/Private accommodation/);
+  assert.doesNotMatch(renderSupportDocuments(state,regular,student,esc),/support-plan-save/);
+  assert.match(renderIepHeart(state,regular,student,esc),/open-iep/);
+  const own=actorForAccount(state,student.id);
+  assert.equal(renderSupportDocuments(state,own,student,esc),"");
+  assert.equal(renderIepHeart(state,own,student,esc),"");
+  assert.equal(JSON.stringify(visibleState(state,own)).includes("Private accommodation"),false);
+});

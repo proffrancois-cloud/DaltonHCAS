@@ -42,7 +42,6 @@ import {
   getStudentSelCheckIns,
   getStudentSelConcerns,
   getStudentRanking,
-  getStudentStats,
   getStudentTotal,
   getTeacherPermissions,
   getTeacherLevelUpGrades,
@@ -59,13 +58,13 @@ import {
 } from "./data.js";
 import { cloudEnabled, cloudLogin, cloudCall, cloudChangePassword, cloudLogout, hasCloudSession } from "./cloud-client.js";
 import { SMART_FIELDS, isSupervisor } from "./support-rules.js";
-import { renderIepHeart, renderSupportProfile } from "./support-ui.js";
+import { renderIepHeart, renderSupportProfile, renderSupportDocuments } from "./support-ui.js";
 import { renderFollowupNotifications as renderSupportNotifications, responseHistory, checkInRow } from "./followup-ui.js";
 import { academicStrategies, behavioralStrategies, selOptions } from "./tier-rules.js";
 import { enablePhonePush, disablePhonePush, initializePhonePush } from "./push-client.js";
 import { renderLevelUpAttachments, canReadLevelUpDocument } from "./levelup-resources.js";
 import { openPdfReader } from "./pdf-reader.js";
-import { emptyStudentFilters, hasStudentFilter, matchingStudents, studentCrestVisual } from "./student-ui.js";
+import { emptyStudentFilters, hasStudentFilter, matchingStudents, studentCrestVisual, browseStudents, toggleFilterValues } from "./student-ui.js";
 import { ACTIVITY_TYPES, ACTIVITY_ACTIONS, staffActivity, filterActivity, recordActivity, alphabeticStaff } from "./activity.js";
 import { rememberFormSteps, enhanceFormSteps, revealInvalidField } from "./form-steps.js";
 let phonePushStatus = "";
@@ -123,24 +122,20 @@ let sendGradeFilter = "";
 let sendHouseFilter = "";
 let sendStudentQuery = "";
 let sendComment = "";
-let sendEditorIds = [];
 let profileStudentId = null;
 let studentQuery = "";
-let houseFilter = "";
-let studentGradeFilter = "";
+let houseFilter = [];
+let studentGradeFilter = [];
+let studentValueFilters = [];
+let studentDateFrom = "", studentDateTo = "";
+let profileCoinFilter = "all";
 let expandedHouseId = null;
-let expandedStudentValueId = null;
 const profileConcernFilters = {
   behavior: "all",
   academic: "all",
   sel: "all"
 };
 let lastConfirmation = null;
-let rankingValueFilter = "";
-let rankingFilters = emptyStudentFilters();
-let rankingDateFrom = "";
-let rankingDateTo = "";
-let rankingExpanded = false;
 let lastConcernConfirmation = null;
 let concernStudentPreset = null;
 const concernStudentFilters = {
@@ -254,6 +249,7 @@ async function handleSupportClick(button) {
   } else if (action === "open-iep" || action === "read-iep-document") {
     const docId = button.dataset.documentId ?? [...(state.iepDocuments ?? [])].reverse().find(item => item.studentId === button.dataset.studentId)?.id;
     if (docId) await openIepReader(docId);
+    else { setView("students", { studentId: button.dataset.studentId }); document.getElementById(`student-support-${button.dataset.studentId}`)?.scrollIntoView({ block: "start" }); }
   } else if (action === "read-support-notification") {
     await runCloudAction("notification-read", { key: button.dataset.notificationKey });
   } else if (action === "goal-access") {
@@ -292,8 +288,8 @@ async function handleSupportSubmit(form) {
     } else if (type === "iep-upload") {
       const file = formData.get("pdf");
       if (!file?.size || !/\.pdf$/i.test(file.name) || file.size > 10 * 1024 * 1024) throw new Error("Choose a PDF up to 10 MB");
-      const encoded = await readFileAsDataUrl(file, 10 * 1024 * 1024, "IEP PDF");
-      result = await cloudCall("iep-upload", { studentId: form.dataset.studentId, name: file.name, base64: encoded.split(",")[1] });
+      const encoded = await readFileAsDataUrl(file, 10 * 1024 * 1024, "Support-plan PDF");
+      result = await cloudCall("iep-upload", { studentId: form.dataset.studentId, name: file.name, kind: formData.get("kind"), base64: encoded.split(",")[1] });
     } else {
       const payload = type === "goal-add" ? {
         studentId: form.dataset.studentId, title: formData.get("title"), dueDate: formData.get("dueDate"),
@@ -305,6 +301,7 @@ async function handleSupportSubmit(form) {
         : type === "goal-schedule" ? { id: form.dataset.goalId, responsibleTeacherId: formData.get("responsibleTeacherId"), checkIns: readCheckIns(form) }
         : type === "goal-reflection" ? { id: form.dataset.goalId, text: formData.get("text") }
         : type === "goal-close" ? { id: form.dataset.goalId, status: formData.get("status"), note: formData.get("note") }
+        : type === "support-plan-save" ? { studentId: form.dataset.studentId, info: formData.get("info") }
         : type === "account-reset" ? { id: formData.get("id") } : { teacherId: formData.get("teacherId") };
       result = await cloudCall(type, { payload });
     }
@@ -401,8 +398,8 @@ function setView(view, options = {}) {
   if (options.studentId) {
     if (profileStudentId !== options.studentId) resetProfileConcernFilters();
     profileStudentId = options.studentId;
-    studentQuery = getStudent(options.studentId)?.name ?? "";
-    houseFilter = studentGradeFilter = "";
+    studentQuery = "";
+    houseFilter = []; studentGradeFilter = []; studentValueFilters = []; studentDateFrom = studentDateTo = "";
   }
   window.location.hash = view;
   render();
@@ -466,7 +463,7 @@ function refreshEditorChips(picker) {
 }
 
 function renderRecordAccessSummary(record) {
-  const additionalEditors = (record.editorIds ?? []).map(getTeacher).filter(Boolean);
+  const additionalEditors = record.studentId && "points" in record ? [] : (record.editorIds ?? []).map(getTeacher).filter(Boolean);
   return `<details class="record-access-summary"><summary>Editors</summary><p>The author, super admins and supervising teachers${additionalEditors.length ? `, and ${additionalEditors.map((teacher) => escapeHtml(teacher.name)).join(", ")}` : ""}.</p></details>`;
 }
 
@@ -548,9 +545,8 @@ function getAvailableGrades() {
 }
 
 function getStudentFilters(context) {
-  if (context === "ranking") return rankingFilters;
   if (context === "students") {
-    return { query: studentQuery, house: houseFilter, grade: studentGradeFilter };
+    return { query: studentQuery, house: houseFilter, grade: studentGradeFilter, values: studentValueFilters, from: studentDateFrom, to: studentDateTo };
   }
   if (context === "send") {
     return { query: sendStudentQuery, house: sendHouseFilter, grade: sendGradeFilter };
@@ -563,10 +559,10 @@ function getStudentsMatchingFilters(filters) {
 }
 
 function resetRosterFilters(context) {
-  if (context === "students") { studentQuery = houseFilter = studentGradeFilter = ""; profileStudentId = null; }
+  if (context === "students") { studentQuery = ""; houseFilter = []; studentGradeFilter = []; studentValueFilters = []; studentDateFrom = studentDateTo = ""; profileStudentId = null; profileCoinFilter = "all"; }
   else if (context === "send") { sendStudentQuery = sendHouseFilter = sendGradeFilter = ""; }
   else if (concernStudentFilters[context]) concernStudentFilters[context] = emptyStudentFilters();
-  else if (context === "dashboard") { rankingFilters = emptyStudentFilters(); rankingValueFilter = ""; rankingDateFrom = rankingDateTo = ""; rankingExpanded = false; calendarTeacherGrade = ""; selectedCalendarEventId = null; }
+  else if (context === "dashboard") { calendarTeacherGrade = ""; selectedCalendarEventId = null; }
 }
 
 function renderCrestVisual(student, points = getStudentTotal(state, student.id)) {
@@ -574,6 +570,7 @@ function renderCrestVisual(student, points = getStudentTotal(state, student.id))
 }
 
 function renderStudentFilters(context) {
+  if (context === "students") return renderStudentBrowseFilters();
   const filters = getStudentFilters(context);
   const searchId = context === "students" ? "student-search" : `${context}-student-search`;
   return `
@@ -599,13 +596,26 @@ function renderStudentFilters(context) {
   `;
 }
 
+function renderStudentBrowseFilters() {
+  const filters = getStudentFilters("students");
+  const group = (items, selected, category) => items.map(item => `<button type="button" data-action="filter-student-${category}" data-filter-value="${item.id}" class="${selected.includes(String(item.id)) ? "is-selected" : ""}" aria-pressed="${selected.includes(String(item.id))}">${item.image ? `<img src="${item.image}" alt="" />` : ""}${item.name}</button>`).join("");
+  return `<section class="student-controls student-browse-controls" data-student-filters="students" aria-label="Student filters">
+    <label class="search-field"><span class="sr-only">Search by name, house or 7C</span><input id="student-search" data-student-search="students" type="search" placeholder="Name, house or 7C" value="${escapeHtml(studentQuery)}" autocomplete="off" /></label>
+    <div class="house-filters" role="group" aria-label="Houses">${group([{id:"all",name:"All houses"},...HOUSES],houseFilter,"house")}</div>
+    <div class="grade-filters" role="group" aria-label="Grades">${group([{id:"all",name:"All grades"},...getAvailableGrades().map(g=>({id:String(g),name:`Grade ${g}`}))],studentGradeFilter,"grade")}</div>
+    <div class="value-filters" role="group" aria-label="7Cs">${group([{id:"all",name:"All 7Cs"},...VALUES.map(v=>({id:v.id,name:v.name}))],studentValueFilters,"value")}</div>
+    <div class="student-ranking-dates" ${browseStudents(state,filters,HOUSES,VALUES).ranked ? "" : "hidden"}><label>From<input type="date" id="student-date-from" value="${studentDateFrom}" max="${studentDateTo}" /></label><label>To<input type="date" id="student-date-to" value="${studentDateTo}" min="${studentDateFrom}" /></label><button type="button" class="text-button" data-action="clear-student-dates">All dates</button></div>
+  </section>`;
+}
+
 function updateStudentFilters(context, changes) {
   const filters = { ...getStudentFilters(context), ...changes };
-  if (context === "ranking") rankingFilters = filters;
-  else if (context === "students") {
+  if (context === "students") {
     studentQuery = filters.query;
     houseFilter = filters.house;
     studentGradeFilter = filters.grade;
+    studentValueFilters = filters.values ?? [];
+    studentDateFrom = filters.from ?? ""; studentDateTo = filters.to ?? "";
   } else if (context === "send") {
     sendStudentQuery = filters.query;
     sendHouseFilter = filters.house;
@@ -618,15 +628,15 @@ function updateStudentFilters(context, changes) {
   if (!controls) return;
   controls.querySelector("input").value = filters.query;
   controls.querySelectorAll("button").forEach((button) => {
-    const selected = button.dataset.action === "filter-house"
+    const category = button.dataset.action?.replace("filter-student-", "");
+    const selected = context === "students" ? (category === "house" ? houseFilter : category === "grade" ? studentGradeFilter : category === "value" ? studentValueFilters : []).includes(button.dataset.filterValue) : button.dataset.action === "filter-house"
       ? button.dataset.houseId === filters.house
       : button.dataset.grade === filters.grade;
     button.classList.toggle("is-selected", selected);
     button.setAttribute("aria-pressed", String(selected));
   });
 
-  if (context === "ranking") refreshStudentRanking();
-  else if (context === "students") refreshStudentBrowser();
+  if (context === "students") refreshStudentBrowser();
   else if (context === "send") {
     const students = getFilteredSendStudents();
     document.querySelector("#send-student-count").textContent = `${formatStudentCount(students.length)} available · ${sendStudentIds.length} selected`;
@@ -662,7 +672,6 @@ function resetSendSelection() {
   selectedPoints = null;
   sendStudentIds = [];
   sendComment = "";
-  sendEditorIds = [];
   lastConfirmation = null;
 }
 
@@ -1089,9 +1098,9 @@ function renderTopbarHouseScores() {
       <span aria-hidden="true">${hasTodayCheckIn ? "✓" : "♡"}</span>
       ${hasTodayCheckIn ? "Check-in complete" : "Daily SEL check-in"}
     </button>
-    <button class="student-mobile-logout" type="button" data-action="logout">Log out</button>
+
   ` : "";
-  topbarHouseScores.innerHTML = houses + studentTools;
+  topbarHouseScores.innerHTML = houses + studentTools + `<button type="button" class="mobile-logout-icon" data-action="logout" aria-label="Log out" title="Log out"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 5H4v14h5M13 7l5 5-5 5M8 12h10" /></svg></button>`;
   document.querySelector("#sidebar-house-scores").innerHTML = houses;
   document.querySelector("#sidebar-student-tools").innerHTML = studentTools;
 }
@@ -1162,53 +1171,6 @@ function renderHouseLeaders(house) {
   `;
 }
 
-function getRankedStudents() {
-  const ranked = getStudentRanking(state, {
-    valueId: rankingValueFilter || "all",
-    grade: rankingFilters.grade || "all",
-    dateFrom: rankingDateFrom,
-    dateTo: rankingDateTo
-  });
-  return matchingStudents(ranked, rankingFilters, {
-    activated: Boolean(rankingValueFilter || rankingDateFrom || rankingDateTo)
-  });
-}
-
-function renderRankingResults() {
-  const ranking = getRankedStudents();
-  const visible = rankingExpanded ? ranking : ranking.slice(0, 20);
-  return visible.length ? `<ol class="ranking-crest-grid">${visible.map((student, index) => `
-    <li><span class="ranking-position" aria-label="Rank ${index + 1}">${index + 1}</span>
-      <div class="student-crest-item"><button class="student-crest" type="button" data-action="open-student" data-student-id="${student.id}" aria-label="Rank ${index + 1}: ${escapeHtml(student.name)}, Grade ${student.grade}, ${student.points} points, ${student.recognitions} coins">
-        ${renderCrestVisual(student, student.points)}
-      </button>${renderIepHeart(state, activeUser, student, escapeHtml)}</div>
-      <small>${student.recognitions} ${student.recognitions === 1 ? "coin" : "coins"}</small>
-    </li>`).join("")}</ol>` : renderStudentFilterEmptyState("ranking");
-}
-
-function refreshStudentRanking() {
-  const results = document.querySelector("#ranking-results");
-  if (results) results.innerHTML = renderRankingResults();
-}
-
-function renderStudentRanking() {
-  return `
-    <section class="panel student-ranking-panel" aria-labelledby="student-ranking-title">
-      <div class="panel-heading ranking-heading">
-        <h2 id="student-ranking-title">Student coin ranking</h2>
-        <button class="text-button" type="button" data-action="toggle-ranking-roster">${rankingExpanded ? "Show top 20" : "View full roster"}</button>
-      </div>
-      ${renderStudentFilters("ranking")}
-      <div class="ranking-filters" aria-label="Ranking recognition filters">
-        <label>7C<select id="ranking-value-filter"><option value="">Choose a 7C</option><option value="all" ${rankingValueFilter === "all" ? "selected" : ""}>All 7Cs</option>${VALUES.map(value => `<option value="${value.id}" ${rankingValueFilter === value.id ? "selected" : ""}>${value.name}</option>`).join("")}</select></label>
-        <label>From<input id="ranking-date-from" type="date" value="${rankingDateFrom}" max="${rankingDateTo}" /></label>
-        <label>To<input id="ranking-date-to" type="date" value="${rankingDateTo}" min="${rankingDateFrom}" /></label>
-        ${rankingDateFrom || rankingDateTo ? '<button type="button" class="text-button" data-action="clear-ranking-date">All dates</button>' : ""}
-      </div>
-      <div id="ranking-results" class="ranking-results">${renderRankingResults()}</div>
-    </section>
-  `;
-}
 
 function renderDashboard() {
   const totals = getHouseTotals(state);
@@ -1299,7 +1261,6 @@ function renderDashboard() {
           </ol>
         </section>
 
-        ${renderStudentRanking()}
       </div>
     </div>
   `;
@@ -1337,7 +1298,6 @@ function renderSendSummary(student, selectedValue, canSend) {
           <dt>Comment</dt>
           <dd class="send-comment-preview ${sendComment.trim() ? "" : "is-empty"}">${commentLabel}</dd>
         </div>
-        <div><dt>Additional editors</dt><dd>${sendEditorIds.length ? `${sendEditorIds.length} selected` : "None"}</dd></div>
       </dl>
 
       <button
@@ -1431,10 +1391,6 @@ function renderSend() {
             </div>
           </fieldset>
 
-          <fieldset class="concern-section editor-access-section">
-            <legend><span>5</span> Editing access</legend>
-            ${renderEditorAccessPicker({ selectedIds: sendEditorIds })}
-          </fieldset>
         </section>
 
         <aside class="send-summary-list" aria-label="Recognition summaries">
@@ -1582,6 +1538,7 @@ function concernMatchesProfileFilter(type, concern, filter) {
 
 function renderProfileConcernFilter(type, concerns, label) {
   const options = getProfileConcernFilterOptions(type, concerns);
+  if(type === "sel" && (state.selCheckIns??[]).some(c=>c.studentId===profileStudentId)) options.push({value:"check-in",label:"Daily check-ins"});
   if (!options.some((option) => option.value === profileConcernFilters[type])) {
     profileConcernFilters[type] = "all";
   }
@@ -1667,7 +1624,7 @@ function renderRecordEditModal() {
         </div>
         <form id="record-edit-form" data-record-type="${type}" data-record-id="${record.id}">
           <div class="record-edit-fields">${awardFields}${commonConcernFields}</div>
-          ${renderEditorAccessPicker({ selectedIds: record.editorIds, authorId: record.teacherId })}
+          ${type === "award" ? "" : renderEditorAccessPicker({ selectedIds: record.editorIds, authorId: record.teacherId })}
           <p class="field-help">The author, students involved, original publication date, and category-specific selections stay attached to this record.</p>
           <div class="form-submit-bar"><span>${record.updatedAt ? `Last edited ${formatDateTime(record.updatedAt)}` : "No previous edits"}</span><button class="primary-button" type="submit">Save changes</button></div>
         </form>
@@ -1762,7 +1719,7 @@ function renderBehaviorIssueOptions(level) {
   return `${issues}
     <label class="issue-option">
       <input id="behavior-other-issue-toggle" type="checkbox" name="otherIssueSelected" value="1" />
-      <span><strong>Other issue not listed</strong><small>Use the additional incident details box below.</small></span>
+      <span><strong>Other issue not listed</strong><small>Describe the issue in the incident description.</small></span>
     </label>`;
 }
 
@@ -1811,20 +1768,7 @@ function renderBehaviorConcern() {
         </fieldset>
 
         <fieldset class="concern-section">
-          <legend><span>2</span> Incident details</legend>
-          <div class="form-grid three-columns">
-            <label>Date of incident<input name="incidentDate" type="date" value="${getTodayInputValue()}" required /></label>
-            <label>Time of incident<input name="incidentTime" type="time" value="13:15" required /></label>
-            <label>Location<select name="location" required><option value="">Select a location</option>${BEHAVIOR_LOCATIONS.map((location) => `<option value="${escapeHtml(location)}">${escapeHtml(location)}</option>`).join("")}</select></label>
-          </div>
-          <label class="full-field">Other location <small>Complete only when “Other location” is selected</small><input name="otherLocation" maxlength="160" /></label>
-          <label class="full-field">Concern title<input name="title" maxlength="${MAX_CONCERN_TITLE_LENGTH}" placeholder="Short student-visible title" required /></label>
-          <label class="full-field">Description<textarea name="description" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" placeholder="Describe what happened using objective language" required></textarea></label>
-          <p class="visibility-note"><strong>Student-visible fields:</strong> title, incident date, and description only.</p>
-        </fieldset>
-
-        <fieldset class="concern-section">
-          <legend><span>3</span> Behavior code issues</legend>
+          <legend><span>2</span> Behavior code issue & incident details</legend>
           <div class="form-grid two-columns">
             <label>Behavior tier<select id="behavior-tier" name="tier" required><option value="">Select a tier first</option><option value="1">Tier 1 (Level I), teacher-managed</option><option value="2">Tier 2 (Level II), administration-managed</option></select></label>
             <label>Occurrence<select id="behavior-occurrence" name="occurrence" required><option value="">Select occurrence</option><option value="1">First occurrence</option><option value="2">Second occurrence</option><option value="3">Third occurrence or pattern</option></select></label>
@@ -1832,8 +1776,20 @@ function renderBehaviorConcern() {
           <div class="issue-level-group" id="behavior-tier-issues">
             <p class="field-help">Select Tier 1 or Tier 2 to view its behavior-code items.</p>
           </div>
-          <label class="full-field">Additional incident details or issue not listed <small>This can be used with any selected issue.</small><textarea name="additionalIssueDetails" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3"></textarea></label>
+                  <h3 class="subsection-title">Incident details</h3>
+          <div class="form-grid two-columns">
+            <label>Incident date and time<input name="incidentAt" type="datetime-local" value="${getTodayInputValue()}T13:15" required /></label>
+            <label>Location<select name="location" required><option value="">Select a location</option>${BEHAVIOR_LOCATIONS.map((location) => `<option value="${escapeHtml(location)}">${escapeHtml(location)}</option>`).join("")}</select></label>
+          </div>
+          <label class="full-field conditional-field" data-other-location hidden>Other location<input name="otherLocation" maxlength="160" disabled /></label>
+          <label class="full-field">Concern title<input name="title" maxlength="${MAX_CONCERN_TITLE_LENGTH}" placeholder="Short student-visible title" required /></label>
+          <label class="full-field">Description<textarea name="description" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" placeholder="Describe what happened using objective language" required></textarea></label>
+          <p class="visibility-note"><strong>Student-visible fields:</strong> title, incident date, and description only.</p>
+                  <h3 class="subsection-title">Supporting file · optional</h3>
+          ${renderConcernAttachmentFields()}
         </fieldset>
+
+
 
         <fieldset class="concern-section">
           <legend><span>4</span> Code-based action</legend>
@@ -1868,10 +1824,6 @@ function renderBehaviorConcern() {
           <p class="visibility-note">The student and House totals will show a negative recognition: “Behavior demonstrates poor [selected 7C] value.”</p>
         </fieldset>
 
-        <fieldset class="concern-section">
-          <legend><span>7</span> Supporting file <small>Optional</small></legend>
-          ${renderConcernAttachmentFields()}
-        </fieldset>
 
         <fieldset class="concern-section confidential-section">
           <legend><span>8</span> Confidential teacher note <small>Optional</small></legend>
@@ -1945,6 +1897,8 @@ function renderAcademicConcern() {
           <p class="field-help" id="academic-multi-help">Choose one or more items from the selected tier.</p>
           <label class="full-field">Other academic issue <small>Optional</small><textarea name="otherIssue" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3" placeholder="Write the concern in your own words if it is not listed"></textarea></label>
           <label class="full-field">Description<textarea name="description" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" placeholder="Include observations, evidence, or a pattern you have noticed" required></textarea></label>
+          <h3 class="subsection-title">Supporting file · optional</h3>
+          ${renderConcernAttachmentFields()}
         </fieldset>
 
         <fieldset class="concern-section">
@@ -1962,10 +1916,6 @@ function renderAcademicConcern() {
           <label class="full-field">Other intervention <small>Optional</small><textarea name="otherStrategy" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3"></textarea></label>
         </fieldset>
 
-        <fieldset class="concern-section">
-          <legend><span>4</span> Supporting file <small>Optional</small></legend>
-          ${renderConcernAttachmentFields()}
-        </fieldset>
 
         <fieldset class="concern-section confidential-section">
           <legend><span>5</span> Internal note <small>Optional</small></legend>
@@ -2021,6 +1971,8 @@ function renderSelConcern() {
             <label>Concern title<input name="title" maxlength="${MAX_CONCERN_TITLE_LENGTH}" required /></label>
           </div>
           <label class="full-field">Objective description<textarea name="description" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" required placeholder="Describe what you observed or what the student reported."></textarea></label>
+          <h3 class="subsection-title">Supporting file · optional</h3>
+          ${renderConcernAttachmentFields()}
         </fieldset>
 
         <fieldset class="concern-section">
@@ -2037,10 +1989,6 @@ function renderSelConcern() {
           <p class="visibility-note">Tier 3 and safety concerns require immediate school procedures. The strategy suggestions do not replace urgent referral.</p>
         </fieldset>
 
-        <fieldset class="concern-section">
-          <legend><span>5</span> Supporting file <small>Optional</small></legend>
-          ${renderConcernAttachmentFields()}
-        </fieldset>
 
         <fieldset class="concern-section confidential-section">
           <legend><span>6</span> Confidential teacher note <small>Optional</small></legend>
@@ -2062,7 +2010,7 @@ function renderSelConcern() {
 }
 
 function getFilteredStudents() {
-  return getStudentsMatchingFilters(getStudentFilters("students"));
+  return browseStudents(state, getStudentFilters("students"), HOUSES, VALUES).students;
 }
 
 function formatStudentCount(count) {
@@ -2072,7 +2020,7 @@ function formatStudentCount(count) {
 function renderStudents() {
   if (activeUser?.type === "student") {
     const student = getActiveStudent();
-    return `<div class="page">${renderPageHeader("My profile", "")}<section class="panel">${renderSupportProfile(state, activeUser, student, escapeHtml)}${renderStudentCoinTable(student)}<section class="profile-record-section"><h3>Behavior notices</h3>${state.behaviorConcerns.map(item => `<article><h4>${escapeHtml(item.title)}</h4><time>${formatDateOnly(item.incidentDate)}</time><p>${escapeHtml(item.description)}</p></article>`).join("") || '<p>No behavior notices.</p>'}</section></section></div>`;
+    return `<div class="page">${renderPageHeader("My profile", "")}<section class="panel"><div class="profile-heading"><img src="${getHouse(student.houseId).image}" alt=""/><div><span>Grade ${student.grade} · ${getHouse(student.houseId).name}</span><h2>${escapeHtml(student.name)}</h2></div><div class="profile-total"><strong>${getStudentTotal(state,student.id)}</strong><span>points</span></div></div>${renderStudentCoinTable(student)}${renderSupportProfile(state, activeUser, student, escapeHtml)}<section class="profile-record-section"><h3>Behavior notices</h3>${state.behaviorConcerns.map(item => `<article><h4>${escapeHtml(item.title)}</h4><time>${formatDateOnly(item.incidentDate)}</time><p>${escapeHtml(item.description)}</p></article>`).join("") || '<p>No behavior notices.</p>'}</section></section></div>`;
   }
   const filteredStudents = getFilteredStudents();
 
@@ -2083,7 +2031,7 @@ function renderStudents() {
       ${renderStudentFilters("students")}
 
       <div class="students-layout">
-        <section class="panel student-list-panel" aria-labelledby="student-count">
+        <section class="panel student-list-panel" aria-labelledby="student-count" ${profileStudentId && !hasStudentFilter(getStudentFilters("students")) ? "hidden" : ""}>
           <div class="list-heading">
             <h2 id="student-count">${formatStudentCount(filteredStudents.length)}</h2>
           </div>
@@ -2107,60 +2055,19 @@ function renderStudentGallery() {
     return renderStudentFilterEmptyState("students");
   }
 
-  return students.map(student => `<div class="student-crest-item"><button class="student-crest ${student.id === profileStudentId ? "is-selected" : ""}" type="button" data-action="select-student" data-student-id="${student.id}" aria-pressed="${student.id === profileStudentId}" aria-label="${escapeHtml(student.name)}, Grade ${student.grade}, ${getHouse(student.houseId).name}, ${getStudentTotal(state, student.id)} points">
-    ${renderCrestVisual(student)}
+  const ranked = browseStudents(state, getStudentFilters("students"), HOUSES, VALUES).ranked;
+  return students.map((student,index) => `<div class="student-crest-item">${ranked ? `<span class="student-browser-rank" aria-label="Rank ${index+1}">${index+1}</span>` : ""}<button class="student-crest ${student.id === profileStudentId ? "is-selected" : ""}" type="button" data-action="select-student" data-student-id="${student.id}" aria-pressed="${student.id === profileStudentId}" aria-label="${escapeHtml(student.name)}, Grade ${student.grade}, ${getHouse(student.houseId).name}, ${getStudentTotal(state, student.id)} points">
+    ${renderCrestVisual(student, student.points)}
   </button>${renderIepHeart(state, activeUser, student, escapeHtml)}</div>`).join("");
 }
 
 function renderStudentDetailRegion() {
-  const isStudentVisible = getFilteredStudents().some(
-    (student) => student.id === profileStudentId
-  );
-
-  if (!profileStudentId || !isStudentVisible) {
-    profileStudentId = null;
-    expandedStudentValueId = null;
-    resetProfileConcernFilters();
-    return "";
-  }
+  if (!profileStudentId || !getStudent(profileStudentId)) return "";
 
   return `
     <section class="panel student-detail" id="student-detail">
       ${renderStudentDetail()}
     </section>
-  `;
-}
-
-function renderStudentValueHistory(student, value) {
-  const awards = getStudentAwards(state, student.id, value.id);
-
-  return `
-    <div class="student-value-history" id="${student.id}-${value.id}-history">
-      <div class="value-history-heading">
-        <strong>${value.name} history</strong>
-        <span>${awards.length} ${awards.length === 1 ? "recognition" : "recognitions"}</span>
-      </div>
-      ${awards.length ? `
-        <ul>
-          ${awards
-            .map((award) => {
-              const teacher = getTeacher(award.teacherId);
-              return `
-                <li>
-                  <span class="history-teacher-avatar" aria-hidden="true">${teacher.name.charAt(0)}</span>
-                  <div>
-                    <strong>${teacher.name}</strong>
-                    <time datetime="${award.createdAt}">Published ${formatDateTime(award.createdAt)}</time>
-                    ${renderRecognitionComment(award.comment)}
-                  </div>
-                  <b class="points-notification ${award.points < 0 ? "is-negative" : ""}">${formatSignedPoints(award.points)}</b>
-                </li>
-              `;
-            })
-            .join("")}
-        </ul>
-      ` : '<p class="empty-value-history">No recognitions for this 7C yet.</p>'}
-    </div>
   `;
 }
 
@@ -2171,12 +2078,12 @@ function renderProfileRecordAction(student, type) {
 }
 
 function renderStudentCoinTable(student) {
-  const awards = getStudentAwards(state, student.id);
+  const awards = getStudentAwards(state, student.id, profileCoinFilter === "all" ? undefined : profileCoinFilter);
   return `
     <section class="profile-record-section" aria-labelledby="${student.id}-coin-history">
       <div class="record-section-heading">
         <div><h3 id="${student.id}-coin-history">Coins received</h3><span>${awards.length} published recognitions</span></div>
-        ${renderProfileRecordAction(student, "coin")}
+        <div class="record-heading-tools"><label><span class="sr-only">Filter coins by 7C</span><select data-profile-coin-filter><option value="all">All 7Cs</option>${VALUES.map(value=>`<option value="${value.id}" ${profileCoinFilter===value.id?"selected":""}>${value.name}</option>`).join("")}</select></label>${renderProfileRecordAction(student, "coin")}</div>
       </div>
       <div class="responsive-table">
         <table class="record-table">
@@ -2346,13 +2253,14 @@ function renderSelConcernsTable(student) {
   const concerns = allConcerns.filter((concern) =>
     concernMatchesProfileFilter("sel", concern, profileConcernFilters.sel)
   );
+  const checkIns = ["all","check-in"].includes(profileConcernFilters.sel) ? getStudentSelCheckIns(state, student.id) : [];
   const countLabel = profileConcernFilters.sel === "all"
     ? `${allConcerns.length} teacher-only records`
     : `${concerns.length} of ${allConcerns.length} teacher-only records`;
   return `
     <section class="profile-record-section teacher-only-records" aria-labelledby="${student.id}-sel-history">
       <div class="record-section-heading">
-        <div><h3 id="${student.id}-sel-history">SEL concerns</h3><span>${countLabel}</span></div>
+        <div><h3 id="${student.id}-sel-history">SEL</h3><span>${countLabel} · ${checkIns.length} daily check-ins</span></div>
         <div class="record-heading-tools">
           ${renderProfileConcernFilter("sel", allConcerns, "SEL concerns")}
           ${renderProfileRecordAction(student, "sel")}
@@ -2360,9 +2268,10 @@ function renderSelConcernsTable(student) {
         </div>
       </div>
       <div class="responsive-table">
-        <table class="record-table concern-history-table">
+        <table class="record-table concern-history-table sel-history-table">
           <thead><tr><th scope="col">Observed</th><th scope="col">SEL record</th><th scope="col">Published</th><th scope="col">Author</th><th scope="col">Access</th></tr></thead>
           <tbody>
+            ${checkIns.map(checkIn => `<tr class="sel-check-in-record"><td><time datetime="${checkIn.date}">${formatDateOnly(checkIn.date)}</time></td><td><strong>Daily check-in · ${checkIn.rating}/5</strong><p class="record-description">${escapeHtml(checkIn.reflection)}</p></td><td>${formatDateTime(checkIn.updatedAt || checkIn.createdAt || `${checkIn.date}T00:00:00+08:00`)}</td><td>${escapeHtml(student.name)}</td><td>Student check-in</td></tr>`).join("")}
             ${concerns.length ? concerns.map((concern) => {
               const author = getTeacher(concern.teacherId);
               const options = concern.concernIds.map((id) => SEL_CONCERN_OPTIONS.find((option) => option.id === id)).filter(Boolean);
@@ -2392,7 +2301,7 @@ function renderSelConcernsTable(student) {
                   <td>${escapeHtml(author?.name ?? "Unknown teacher")}</td>
                   <td>${renderRecordEditButton("sel", concern)}</td>
                 </tr>`;
-            }).join("") : `<tr><td colspan="5" class="empty-table-cell">${allConcerns.length ? "No SEL concerns match this filter." : "No SEL concerns have been published."}</td></tr>`}
+            }).join("") : !checkIns.length ? `<tr><td colspan="5" class="empty-table-cell">No SEL records match this filter.</td></tr>` : ""}
           </tbody>
         </table>
       </div>
@@ -2400,31 +2309,12 @@ function renderSelConcernsTable(student) {
   `;
 }
 
-function renderSelCheckInsTable(student) {
-  const checkIns = getStudentSelCheckIns(state, student.id);
-  return `
-    <section class="profile-record-section teacher-only-records" aria-labelledby="${student.id}-check-in-history">
-      <div class="record-section-heading">
-        <div><h3 id="${student.id}-check-in-history">Daily SEL check-ins</h3><span>${checkIns.length} student reflections</span></div>
-        <span class="privacy-badge is-private">Teachers only</span>
-      </div>
-      <div class="responsive-table">
-        <table class="record-table">
-          <thead><tr><th scope="col">Date</th><th scope="col">Feeling</th><th scope="col">Reflection</th></tr></thead>
-          <tbody>${checkIns.length ? checkIns.map((checkIn) => `<tr><td>${formatDateOnly(checkIn.date)}</td><td><strong>${checkIn.rating}/5</strong></td><td>${escapeHtml(checkIn.reflection)}</td></tr>`).join("") : '<tr><td colspan="3" class="empty-table-cell">No daily check-ins yet.</td></tr>'}</tbody>
-        </table>
-      </div>
-    </section>
-  `;
-}
 
 function renderStudentDetail() {
   const student = getStudent(profileStudentId);
   if (!student) return "";
   const house = getHouse(student.houseId);
-  const stats = getStudentStats(state, student.id);
   const totalPoints = getStudentTotal(state, student.id);
-  const maxRecognitions = Math.max(...Object.values(stats).map((stat) => stat.recognitions), 1);
 
   return `
     <button class="profile-close" type="button" data-action="close-student-detail" aria-label="Close ${student.name}'s profile">
@@ -2439,43 +2329,12 @@ function renderStudentDetail() {
       <div class="profile-total"><strong>${totalPoints}</strong><span>total points</span></div>
     </div>
 
-    <div class="value-breakdown">
-      <div class="breakdown-heading"><h3>7C breakdown</h3><span>Coins · points</span></div>
-      ${VALUES.map((value) => {
-        const stat = stats[value.id];
-        const width = (stat.recognitions / maxRecognitions) * 100;
-        const isExpanded = expandedStudentValueId === value.id;
-        return `
-          <div class="student-value-entry ${isExpanded ? "is-expanded" : ""}">
-            <button
-              class="breakdown-row"
-              type="button"
-              data-action="toggle-student-value"
-              data-value-id="${value.id}"
-              aria-expanded="${isExpanded}"
-              aria-controls="${student.id}-${value.id}-history"
-            >
-              <span class="value-mini-logo" style="--value-logo: url('${value.image}')" aria-hidden="true"></span>
-              <span class="breakdown-name">
-                <strong>${value.name}</strong>
-                <span class="breakdown-track" aria-hidden="true"><span style="width: ${width}%"></span></span>
-              </span>
-              <span class="coin-count">${stat.recognitions} ${stat.recognitions === 1 ? "coin" : "coins"}</span>
-              <strong class="value-points">${stat.points}</strong>
-              <svg class="value-chevron" aria-hidden="true" viewBox="0 0 24 24"><path d="m8 10 4 4 4-4" /></svg>
-            </button>
-            ${isExpanded ? renderStudentValueHistory(student, value) : ""}
-          </div>
-        `;
-      }).join("")}
-    </div>
-
+    ${renderSupportDocuments(state, activeUser, student, escapeHtml)}
     ${renderStudentCoinTable(student)}
     ${cloudEnabled ? renderSupportProfile(state, activeUser, student, escapeHtml) : ""}
     ${renderBehaviorConcernsTable(student)}
     ${renderAcademicConcernsTable(student)}
     ${renderSelConcernsTable(student)}
-    ${renderSelCheckInsTable(student)}
 
 
   `;
@@ -2552,7 +2411,23 @@ function refreshStudentBrowser() {
 
   list.innerHTML = renderStudentGallery();
   detail.innerHTML = renderStudentDetailRegion();
-  count.textContent = formatStudentCount(getFilteredStudents().length);
+  const ranked = browseStudents(state,getStudentFilters("students"),HOUSES,VALUES).ranked;
+  count.textContent = `${ranked ? "Student coin ranking · " : ""}${formatStudentCount(getFilteredStudents().length)}`;
+  document.querySelector(".student-list-panel").hidden = Boolean(profileStudentId && !hasStudentFilter(getStudentFilters("students")));
+  const controls = document.querySelector('[data-student-filters="students"]');
+  if (controls) {
+    controls.querySelector("input[type=search]").value=studentQuery;
+    controls.querySelectorAll("[data-filter-value]").forEach(button=>{ const key=button.dataset.action.replace("filter-student-",""); const values=key==="house"?houseFilter:key==="grade"?studentGradeFilter:studentValueFilters; const selected=values.includes(button.dataset.filterValue);button.classList.toggle("is-selected",selected);button.setAttribute("aria-pressed",String(selected));});
+    controls.querySelector(".student-ranking-dates").hidden = !ranked;
+    controls.querySelector("#student-date-from").value=studentDateFrom;controls.querySelector("#student-date-to").value=studentDateTo;
+    controls.querySelector("#student-date-from").max=studentDateTo;controls.querySelector("#student-date-to").min=studentDateFrom;
+  }
+  sortSelHistory();
+}
+
+function sortSelHistory() {
+  const body = viewRoot.querySelector(".sel-history-table tbody");
+  if (body) [...body.children].sort((a, b) => (b.querySelector("time")?.dateTime ?? "").localeCompare(a.querySelector("time")?.dateTime ?? "")).forEach(row => body.append(row));
 }
 
 function updateBehaviorCodePreview() {
@@ -2694,9 +2569,10 @@ function render() {
   const pushStatus = viewRoot.querySelector("[data-push-status]");
   if (pushStatus) pushStatus.textContent = phonePushStatus;
   if (cloudEnabled && ["behavior-concern", "academic-concern", "sel-concern"].includes(activeView)) {
-    viewRoot.querySelector(".form-submit-bar")?.insertAdjacentHTML("beforebegin", `<fieldset class="concern-section"><legend>Notify staff for follow-up</legend><p>All supervising teachers and super admins are included automatically. Add other staff below.</p><details><summary>Additional recipients</summary>${state.teachers.filter(t => !isSupervisor({ ...t, type: "teacher" })).map(t => `<label class="checkbox-label"><input type="checkbox" name="notificationRecipientIds" value="${escapeHtml(t.id)}" />${escapeHtml(t.name)}</label>`).join("")}</details><label class="checkbox-label plan-request-toggle"><input type="checkbox" name="requestSmartGoal" /> Notify supervising staff: a SMART support plan may help this student</label></fieldset>`);
+    viewRoot.querySelector(".editor-access-section")?.insertAdjacentHTML("beforeend", `<div class="followup-options"><h4>Notify staff for follow-up</h4><p>All supervising teachers and super admins are included automatically. Add other staff below.</p><details><summary>Additional recipients</summary>${state.teachers.filter(t => !isSupervisor({ ...t, type: "teacher" })).map(t => `<label class="checkbox-label"><input type="checkbox" name="notificationRecipientIds" value="${escapeHtml(t.id)}" />${escapeHtml(t.name)}</label>`).join("")}</details><label class="checkbox-label plan-request-toggle"><input type="checkbox" name="requestSmartGoal" /> Notify supervising staff: a SMART support plan may help this student</label></div>`);
   }
 
+  sortSelHistory();
   enhanceFormSteps(viewRoot, activeView, formStepState);
   window.requestAnimationFrame(() => {
     syncCalendarCreationScope();
@@ -2837,7 +2713,6 @@ document.addEventListener("click", async (event) => {
       activeTeacher = null;
       activeView = "dashboard";
       resetSendSelection();
-      expandedStudentValueId = null;
       resetProfileConcernFilters();
       concernStudentPreset = null;
       lastConcernConfirmation = null;
@@ -2848,16 +2723,6 @@ document.addEventListener("click", async (event) => {
     case "go-send":
       resetSendSelection();
       setView("send");
-      break;
-    case "toggle-ranking-roster":
-      rankingExpanded = !rankingExpanded;
-      if (rankingExpanded && !hasStudentFilter(rankingFilters) && !rankingValueFilter && !rankingDateFrom && !rankingDateTo) rankingFilters.house = "all";
-      render();
-      break;
-    case "clear-ranking-date":
-      rankingDateFrom = "";
-      rankingDateTo = "";
-      render();
       break;
     case "toggle-house-leaders": {
       const houseId = actionTarget.dataset.houseId;
@@ -2926,7 +2791,7 @@ document.addEventListener("click", async (event) => {
         pointsSent,
         Date.now(),
         comment,
-        sendEditorIds
+        []
       );
       await saveState();
       const publishedAt = state.awards.at(-1).createdAt;
@@ -2943,7 +2808,6 @@ document.addEventListener("click", async (event) => {
         selectedValueId = null;
         selectedPoints = null;
         sendComment = "";
-        sendEditorIds = [];
       }
 
       render();
@@ -2952,17 +2816,17 @@ document.addEventListener("click", async (event) => {
     }
     case "reset-student-filters": {
       const context = actionTarget.dataset.filterContext;
-      updateStudentFilters(context, emptyStudentFilters());
+      updateStudentFilters(context, context === "students" ? {query:"",house:[],grade:[],values:[],from:"",to:""} : emptyStudentFilters());
       viewRoot.querySelector(`[data-student-search="${context}"]`)?.focus();
       break;
     }
     case "open-student":
     case "select-student":
       if (profileStudentId !== actionTarget.dataset.studentId) {
-        expandedStudentValueId = null;
         resetProfileConcernFilters();
       }
       profileStudentId = actionTarget.dataset.studentId;
+      studentQuery = ""; houseFilter = []; studentGradeFilter = []; studentValueFilters = []; studentDateFrom = studentDateTo = ""; profileCoinFilter = "all";
       if (activeView !== "students") {
         setView("students", { studentId: profileStudentId });
       } else {
@@ -2972,22 +2836,26 @@ document.addEventListener("click", async (event) => {
         });
       }
       break;
-    case "toggle-student-value": {
-      const valueId = actionTarget.dataset.valueId;
-      expandedStudentValueId = expandedStudentValueId === valueId ? null : valueId;
-      refreshStudentBrowser();
-      window.requestAnimationFrame(() => {
-        document
-          .querySelector(`[data-action="toggle-student-value"][data-value-id="${valueId}"]`)
-          ?.focus({ preventScroll: true });
-      });
-      break;
-    }
     case "close-student-detail":
       profileStudentId = null;
-      expandedStudentValueId = null;
       resetProfileConcernFilters();
       refreshStudentBrowser();
+      break;
+    case "filter-student-house":
+    case "filter-student-grade":
+    case "filter-student-value": {
+      const category = actionTarget.dataset.action.replace("filter-student-", "");
+      const key = category === "house" ? "house" : category === "grade" ? "grade" : "values";
+      const filters = getStudentFilters("students");
+      const selected = toggleFilterValues(filters[key], actionTarget.dataset.filterValue);
+      const changes = { [key]: selected };
+      if (key === "values" && !selected.length) { changes.from = ""; changes.to = ""; }
+      updateStudentFilters("students", changes);
+      break;
+    }
+    case "clear-student-dates":
+      updateStudentFilters("students", { from: "", to: "" });
+      document.querySelectorAll(".student-ranking-dates input").forEach(el=>el.value="");
       break;
     case "filter-house":
     case "filter-grade": {
@@ -3078,18 +2946,15 @@ viewRoot.addEventListener("change", (event) => {
     const houseSelect = document.querySelector("#staff-status-house");
     if (roleSelect) roleSelect.value = option?.dataset.role ?? "teacher";
     if (houseSelect) houseSelect.value = option?.dataset.houseId ?? "";
-  } else if (event.target.matches("#ranking-value-filter")) {
-    rankingValueFilter = event.target.value;
-    render();
-
-  } else if (event.target.matches("#ranking-date-from")) {
-    rankingDateFrom = event.target.value;
-    if (rankingDateTo && rankingDateFrom > rankingDateTo) rankingDateTo = rankingDateFrom;
-    render();
-  } else if (event.target.matches("#ranking-date-to")) {
-    rankingDateTo = event.target.value;
-    if (rankingDateFrom && rankingDateTo < rankingDateFrom) rankingDateFrom = rankingDateTo;
-    render();
+  } else if (event.target.matches("[data-profile-coin-filter]")) {
+    profileCoinFilter = event.target.value; if (activeUser?.type === "student") render(); else refreshStudentBrowser();
+  } else if (event.target.matches("#student-date-from, #student-date-to")) {
+    let from=document.querySelector("#student-date-from").value,to=document.querySelector("#student-date-to").value;
+    if(from&&to&&from>to){if(event.target.id.endsWith("from"))to=from;else from=to;}
+    updateStudentFilters("students",{from,to});
+  } else if (event.target.matches('#behavior-concern-form [name="location"]')) {
+    const field=event.target.form.querySelector('[data-other-location]'); const other=event.target.value === "Other location";
+    field.hidden=!other;field.querySelector('input').disabled=!other;field.querySelector('input').required=other;if(!other)field.querySelector('input').value="";
   } else if (event.target.matches("[data-profile-concern-filter]")) {
     const type = event.target.dataset.profileConcernFilter;
     if (!(type in profileConcernFilters)) return;
@@ -3097,13 +2962,6 @@ viewRoot.addEventListener("change", (event) => {
     refreshStudentBrowser();
     window.requestAnimationFrame(() => {
       document.querySelector(`[data-profile-concern-filter="${type}"]`)?.focus({ preventScroll: true });
-    });
-  } else if (event.target.matches('#award-form [name="editorIds"]')) {
-    sendEditorIds = [...document.querySelectorAll('#award-form [name="editorIds"]:checked')].map(
-      (input) => input.value
-    );
-    document.querySelectorAll(".send-summary dl > div:last-child dd").forEach((label) => {
-      label.textContent = sendEditorIds.length ? `${sendEditorIds.length} selected` : "None";
     });
   } else if (event.target.matches("#behavior-tier")) {
     const issueContainer = document.querySelector("#behavior-tier-issues");
@@ -3393,10 +3251,10 @@ viewRoot.addEventListener("submit", async (event) => {
         occurrence: formData.get("occurrence"),
         issueIds: formData.getAll("issueIds"),
         otherIssueSelected: formData.get("otherIssueSelected"),
-        additionalIssueDetails: formData.get("additionalIssueDetails"),
+        additionalIssueDetails: formData.get("otherIssueSelected") ? formData.get("description") : "",
         title: formData.get("title"),
         description: formData.get("description"),
-        incidentTime: formData.get("incidentTime"),
+        incidentTime: String(formData.get("incidentAt")).split("T")[1],
         location: formData.get("location"),
         otherLocation: formData.get("otherLocation"),
         teacherActions: formData.getAll("teacherActions"),
@@ -3408,7 +3266,7 @@ viewRoot.addEventListener("submit", async (event) => {
         confidentialNote: formData.get("confidentialNote"),
         editorIds: formData.getAll("editorIds"),
         teacherId: activeTeacher.id,
-        incidentDate: formData.get("incidentDate"),
+        incidentDate: String(formData.get("incidentAt")).split("T")[0],
         ...attachment
       });
       const concern = state.behaviorConcerns.at(-1);

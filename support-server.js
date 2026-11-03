@@ -83,6 +83,13 @@ function applyCommand(state, actor, action, p, now) {
     }
     case "concern-update": return data.updateConcern(state, p.type, p.id, actor.id, p.changes, now);
     case "check-in": return data.addSelCheckIn(state, actor, p, now);
+    case "support-plan-save": {
+      if (!support.isSupervisor(actor)) throw new Error("Only supervising teachers and super admins can edit support information");
+      if (!state.students.some(student => student.id === p.studentId)) throw new Error("Unknown student");
+      const info = String(p.info ?? "").trim();
+      if (info.length > 12000) throw new Error("Support information must be under 12000 characters");
+      return { ...state, supportPlans: { ...(state.supportPlans ?? {}), [p.studentId]: { info, updatedBy: actor.id, updatedAt: iso } } };
+    }
     case "student-create": adminOnly(actor); return data.createStudentAccount(state, actor, p);
     case "teacher-create": adminOnly(actor); return data.createTeacherAccount(state, actor, p);
     case "teacher-status": return data.updateTeacherAccountStatus(state, actor, p.id, p.changes);

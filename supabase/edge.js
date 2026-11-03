@@ -146,11 +146,13 @@ Deno.serve(async request => {
         if (typeof input.base64 !== "string" || input.base64.length > 14_000_000) throw new Error("PDF must be under 10 MB");
         const bytes = Uint8Array.from(atob(input.base64), ch => ch.charCodeAt(0));
         validateIepPdf(actor, bytes, input.name);
+        const kind = input.kind ?? "IEP";
+        if (!["IEP", "504 plan", "Accommodations"].includes(kind)) throw new Error("Choose a support document type");
         if (!uploadedDocument) {
           const id = crypto.randomUUID(), path = `${input.studentId}/${id}.pdf`;
           const uploaded = await supabase.storage.from("hcas-iep").upload(path, bytes, { contentType: "application/pdf", upsert: false });
           if (uploaded.error) throw uploaded.error;
-          uploadedDocument = { id, studentId: input.studentId, path, name: String(input.name).slice(0, 200), uploadedBy: actor.id, publishedAt: new Date().toISOString() };
+          uploadedDocument = { id, studentId: input.studentId, path, name: String(input.name).slice(0, 200), kind, uploadedBy: actor.id, publishedAt: new Date().toISOString() };
         }
         next = { ...next, iepDocuments: [...(next.iepDocuments ?? []), uploadedDocument] };
       } else if (!["load", "password-set"].includes(input.action)) {
