@@ -34,14 +34,13 @@ import {
   createInitialState,
   getBehaviorCodeActions,
   getCalendarEvents,
-  getHouseLeaders,
+  getHouseRanking,
   getHouseTotals,
   getStudentAcademicConcerns,
   getStudentAwards,
   getStudentBehaviorConcerns,
   getStudentSelCheckIns,
   getStudentSelConcerns,
-  getStudentRanking,
   getStudentTotal,
   getTeacherPermissions,
   getTeacherLevelUpGrades,
@@ -130,6 +129,8 @@ let studentValueFilters = [];
 let studentDateFrom = "", studentDateTo = "";
 let profileCoinFilter = "all";
 let expandedHouseId = null;
+let houseRankingFilters = { valueIds: [], from: "", to: "" };
+const houseRankingDialog = document.querySelector("#house-ranking-dialog");
 const profileConcernFilters = {
   behavior: "all",
   academic: "all",
@@ -646,6 +647,7 @@ function updateStudentFilters(context, changes) {
 
 function renderStudentFilterEmptyState(context, hidden = false) {
   const active = hasStudentFilter(getStudentFilters(context));
+  if (context !== "students" && !active) return `<div data-student-filter-empty="${context}" hidden></div>`;
   return `
     <div class="no-filter-results" data-student-filter-empty="${context}" ${hidden ? "hidden" : ""}>
       <p>${active ? "No students match these filters." : "Search by name or choose a house or grade."}</p>
@@ -778,22 +780,7 @@ function getVisibleCalendarEvents(startDate = "2026-08-01", endDate = "2027-06-0
 }
 
 function renderCalendarEvent(event) {
-  const gradeLabel = activeUser.type === "teacher" && event.grades?.length && event.grades.length < 7
-    ? ` · G${event.grades.join(", G")}`
-    : "";
-  return `
-    <button
-      class="calendar-event is-${event.type}"
-      type="button"
-      data-action="open-calendar-event"
-      data-event-id="${escapeHtml(event.id)}"
-      aria-label="${escapeHtml(`${event.title}${gradeLabel}. Open details.`)}"
-    >
-      <span>${getCalendarTypeLabel(event.type)}${gradeLabel}</span>
-      <strong>${escapeHtml(event.title)}</strong>
-      <small>${formatClockTime(event.startTime)}${event.endTime ? `–${formatClockTime(event.endTime)}` : ""}${event.location ? ` · ${escapeHtml(event.location)}` : ""}</small>
-    </button>
-  `;
+  return `<button class="calendar-event is-${event.type}" type="button" data-action="open-calendar-event" data-event-id="${escapeHtml(event.id)}" aria-label="${escapeHtml(`${event.title}. ${getCalendarTypeLabel(event.type)}. Open details.`)}"><span class="calendar-event-title">${escapeHtml(event.title)}</span></button>`;
 }
 
 function renderCalendarEventPanel(events) {
@@ -1085,7 +1072,7 @@ function renderTopbarHouseScores() {
         type="button"
         data-action="show-house-leaders"
         data-house-id="${house.id}"
-        aria-label="${house.name}, ${totals[house.id]} points. Show top students."
+        aria-label="${house.name}, ${totals[house.id]} points. Open House coin ranking."
         title="${house.name}: ${totals[house.id]} points"
       >
         <img src="${house.image}" alt="" />
@@ -1141,8 +1128,7 @@ function renderSelCheckInModal() {
   `;
 }
 
-function renderHouseLeaders(house) {
-  const leaders = getHouseLeaders(state, house.id);
+function renderHouseLeaders(house, leaders) {
 
   return `
     <div class="house-leaders" id="${house.id}-leaders">
@@ -1194,9 +1180,6 @@ function renderDashboard() {
       </div>
     `;
   }
-  const rankedHouses = [...HOUSES].sort((a, b) => totals[b.id] - totals[a.id]);
-  const maxPoints = Math.max(...Object.values(totals), 1);
-
   return `
     <div class="page">
       ${renderPageHeader("Dashboard", "")}
@@ -1205,66 +1188,52 @@ function renderDashboard() {
         ${renderTeacherActivity()}
       </div>
       ${renderSchoolCalendar()}
-
-      <div class="dashboard-layout">
-        <section class="panel scoreboard-panel" aria-labelledby="house-points-title">
-          <div class="panel-heading">
-            <div>
-              <h2 id="house-points-title">House points</h2>
-            </div>
-          </div>
-
-          <ol class="house-list">
-            ${rankedHouses
-              .map((house, index) => {
-                const members = state.students.filter((student) => student.houseId === house.id).length;
-                const barWidth = Math.max((totals[house.id] / maxPoints) * 100, totals[house.id] ? 7 : 0);
-                const isExpanded = expandedHouseId === house.id;
-                const cupLabel = `${house.cupYears.length} House Cup ${house.cupYears.length === 1 ? "win" : "wins"}: ${house.cupYears.join(", ")}`;
-                return `
-                  <li
-                    class="house-entry ${isExpanded ? "is-expanded" : ""}"
-                    data-house-entry="${house.id}"
-                    style="--house-color: ${house.color}; --bar-width: ${barWidth}%"
-                  >
-                    <button
-                      class="house-row"
-                      type="button"
-                      data-action="toggle-house-leaders"
-                      data-house-id="${house.id}"
-                      aria-expanded="${isExpanded}"
-                      aria-controls="${house.id}-leaders"
-                      aria-label="${house.name}, rank ${index + 1}, ${totals[house.id]} points, ${cupLabel}. ${isExpanded ? "Hide" : "Show"} top students."
-                    >
-                      <span class="rank" aria-hidden="true">${index + 1}</span>
-                      <img src="${house.image}" alt="" />
-                      <div class="house-info">
-                        <div class="house-title-line">
-                          <strong>${house.name}</strong>
-                          <span class="house-cup-history" data-tooltip="${cupLabel}" title="${cupLabel}">
-                            ${house.cupYears.map(() => renderCupIcon()).join("")}
-                          </span>
-                        </div>
-                        <span>${members} ${members === 1 ? "student" : "students"}</span>
-                        <div class="score-track" aria-hidden="true"><span></span></div>
-                      </div>
-                      <span class="house-score-cell">
-                        <strong class="house-points">${totals[house.id].toLocaleString()}<span> pts</span></strong>
-                        <svg class="house-chevron" aria-hidden="true" viewBox="0 0 24 24"><path d="m8 10 4 4 4-4" /></svg>
-                      </span>
-                    </button>
-                    ${isExpanded ? renderHouseLeaders(house) : ""}
-                  </li>
-                `;
-              })
-              .join("")}
-          </ol>
-        </section>
-
-      </div>
     </div>
   `;
 }
+
+function renderHouseRanking() {
+  const houses = getHouseRanking(state, houseRankingFilters);
+  const maxPoints = Math.max(...houses.map(h => h.points), 1);
+  const staff = activeUser?.type === "teacher";
+  houseRankingDialog.innerHTML = `
+    <header class="house-ranking-header"><h2 id="house-ranking-title">House coin ranking</h2><button type="button" class="dialog-close" data-action="close-house-ranking" aria-label="Close House ranking">×</button>
+      <div class="house-ranking-values" role="group" aria-label="Filter House ranking by 7C">
+        <button type="button" data-action="filter-house-ranking-value" data-value-id="all" aria-pressed="${!houseRankingFilters.valueIds.length}">All 7Cs</button>
+        ${VALUES.map(value => `<button type="button" data-action="filter-house-ranking-value" data-value-id="${value.id}" aria-pressed="${houseRankingFilters.valueIds.includes(value.id)}"><span class="house-ranking-value-logo" style="--value-logo:url('${value.image}')" aria-hidden="true"></span>${value.name}</button>`).join("")}
+      </div>
+      <div class="house-ranking-dates"><label>From<input type="date" data-house-ranking-date="from" value="${houseRankingFilters.from}" max="${houseRankingFilters.to}" /></label><label>To<input type="date" data-house-ranking-date="to" value="${houseRankingFilters.to}" min="${houseRankingFilters.from}" /></label><button type="button" class="text-button" data-action="reset-house-ranking-dates">All dates</button></div>
+    </header>
+    <ol class="house-list">${houses.map((house, index) => {
+      const expanded = staff && expandedHouseId === house.id;
+      const cupLabel = `${house.cupYears.length} House Cup wins: ${house.cupYears.join(", ")}`;
+      return `<li class="house-entry ${expanded ? "is-expanded" : ""}" data-house-entry="${house.id}" style="--house-color:${house.color};--bar-width:${Math.max(0, house.points / maxPoints * 100)}%">
+        <button type="button" class="house-row" data-action="toggle-house-leaders" data-house-id="${house.id}" ${staff ? `aria-expanded="${expanded}" aria-controls="${house.id}-leaders"` : "disabled"}>
+          <span class="rank">${index + 1}</span><img src="${house.image}" alt="" />
+          <div class="house-info"><div class="house-title-line"><strong>${house.name}</strong><span class="house-cup-history" title="${cupLabel}">${house.cupYears.map(() => renderCupIcon()).join("")}</span></div>${staff ? `<span>${formatStudentCount(house.members)}</span>` : ""}<div class="score-track" aria-hidden="true"><span></span></div></div>
+          <span class="house-score-cell"><strong class="house-points">${house.points.toLocaleString()}<span> pts</span></strong>${staff ? '<span aria-hidden="true">⌄</span>' : ""}</span>
+        </button>${expanded ? renderHouseLeaders(house, house.leaders) : ""}
+      </li>`;
+    }).join("")}</ol>`;
+}
+
+function openHouseRanking(houseId) {
+  expandedHouseId = houseId;
+  houseRankingFilters = { valueIds: [], from: "", to: "" };
+  renderHouseRanking();
+  if (!houseRankingDialog.open) houseRankingDialog.showModal();
+}
+houseRankingDialog.addEventListener("click", event => { if (event.target === houseRankingDialog) houseRankingDialog.close(); });
+houseRankingDialog.addEventListener("change", event => {
+  const field = event.target.dataset.houseRankingDate;
+  if (!["from", "to"].includes(field)) return;
+  houseRankingFilters[field] = event.target.value;
+  const { from, to } = houseRankingFilters;
+  if (from && to && from > to) houseRankingFilters[field === "from" ? "to" : "from"] = event.target.value;
+  renderHouseRanking();
+  houseRankingDialog.querySelector(`[data-house-ranking-date="${field}"]`)?.focus({ preventScroll: true });
+});
+
 
 function renderSendStudentOption(student) {
   const selected = sendStudentIds.includes(student.id);
@@ -1370,10 +1339,7 @@ function renderSend() {
           <fieldset class="student-choice">
             <legend><span>3</span> Choose students</legend>
             ${renderStudentFilters("send")}
-            <div class="student-select-heading">
-              <span>Students</span>
-              <span id="send-student-count" role="status">${formatStudentCount(filteredStudents.length)} available · ${sendStudentIds.length} selected</span>
-            </div>
+            <span class="sr-only" id="send-student-count" role="status">${formatStudentCount(filteredStudents.length)} available · ${sendStudentIds.length} selected</span>
             <div id="send-student-results">${renderSendStudentResults(filteredStudents)}</div>
           </fieldset>
 
@@ -1670,10 +1636,7 @@ function renderConcernStudentSelector() {
   return `
     <div data-concern-student-selector>
       ${renderStudentFilters(context)}
-      <div class="student-select-heading">
-        <span>Students</span>
-        <span data-concern-student-count role="status">${formatStudentCount(visibleIds.size)} available · ${concernStudentPreset ? 1 : 0} selected</span>
-      </div>
+      <span class="sr-only" data-concern-student-count role="status">${formatStudentCount(visibleIds.size)} available · ${concernStudentPreset ? 1 : 0} selected</span>
       <div class="concern-student-grid" role="group" aria-label="Students involved">
         ${state.students.map(student => `<div class="student-crest-item concern-crest-item" data-concern-student-id="${student.id}" ${visibleIds.has(student.id) ? "" : "hidden"}>
           <label class="concern-student-option">
@@ -1715,7 +1678,7 @@ function renderBehaviorIssueOptions(level) {
       `
     )
     .join("");
-  if (!issues) return '<p class="field-help">Select Tier 1 or Tier 2 to view the related issues.</p>';
+  if (!issues) return '';
   return `${issues}
     <label class="issue-option">
       <input id="behavior-other-issue-toggle" type="checkbox" name="otherIssueSelected" value="1" />
@@ -1774,7 +1737,7 @@ function renderBehaviorConcern() {
             <label>Occurrence<select id="behavior-occurrence" name="occurrence" required><option value="">Select occurrence</option><option value="1">First occurrence</option><option value="2">Second occurrence</option><option value="3">Third occurrence or pattern</option></select></label>
           </div>
           <div class="issue-level-group" id="behavior-tier-issues">
-            <p class="field-help">Select Tier 1 or Tier 2 to view its behavior-code items.</p>
+
           </div>
                   <h3 class="subsection-title">Incident details</h3>
           <div class="form-grid two-columns">
@@ -1794,7 +1757,7 @@ function renderBehaviorConcern() {
         <fieldset class="concern-section">
           <legend><span>4</span> Code-based action</legend>
           <div class="automatic-action" id="behavior-code-preview" aria-live="polite">
-            <p>Select students, a tier, an occurrence, and at least one code issue.</p>
+
           </div>
           <h3 class="subsection-title">Teacher response suggestions</h3>
           <div class="compact-check-grid">${BEHAVIOR_RESPONSE_OPTIONS.map((action) => `<label class="compact-check"><input type="checkbox" name="teacherActions" value="${escapeHtml(action)}" /><span>${escapeHtml(action)}</span></label>`).join("")}</div>
@@ -1816,18 +1779,18 @@ function renderBehaviorConcern() {
 
         <fieldset class="concern-section deduction-section">
           <legend><span>6</span> House-point deduction <small>Optional</small></legend>
-          <p class="field-help">Leave the deduction at zero to publish the concern without changing House points.</p>
+
           <div class="form-grid two-columns">
             <label>7C value<select name="deductionValueId"><option value="">No 7C selected</option>${VALUES.map((value) => `<option value="${value.id}">${value.name}</option>`).join("")}</select></label>
             <label>Points taken<select name="deductionPoints"><option value="0">No points taken</option>${POINT_OPTIONS.map((points) => `<option value="${points}">−${points} points</option>`).join("")}</select></label>
           </div>
-          <p class="visibility-note">The student and House totals will show a negative recognition: “Behavior demonstrates poor [selected 7C] value.”</p>
+
         </fieldset>
 
 
         <fieldset class="concern-section confidential-section">
           <legend><span>8</span> Confidential teacher note <small>Optional</small></legend>
-          <p class="field-help">Visible only in authenticated teacher sessions. This field is excluded from any student-facing summary.</p>
+
           <label class="full-field"><span class="sr-only">Confidential teacher note</span><textarea name="confidentialNote" maxlength="${MAX_INTERNAL_NOTE_LENGTH}" rows="4" placeholder="Internal context for teachers only"></textarea></label>
         </fieldset>
 
@@ -1837,7 +1800,7 @@ function renderBehaviorConcern() {
         </fieldset>
 
         <div class="form-submit-bar">
-          <span>Publication date and author are added automatically.</span>
+
           <button class="primary-button" type="submit">Publish behavior concern</button>
         </div>
       </form>
@@ -1890,11 +1853,11 @@ function renderAcademicConcern() {
           </div>
           <label class="full-field">Concern title<input name="title" maxlength="${MAX_CONCERN_TITLE_LENGTH}" placeholder="Short internal title" required /></label>
           <label class="full-field">What kind of academic issue?
-            <select id="academic-issue-select" name="issueIds" multiple size="8" aria-describedby="academic-multi-help">
+            <select id="academic-issue-select" name="issueIds" multiple size="8" >
               ${renderAcademicIssueOptions()}
             </select>
           </label>
-          <p class="field-help" id="academic-multi-help">Choose one or more items from the selected tier.</p>
+
           <label class="full-field">Other academic issue <small>Optional</small><textarea name="otherIssue" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3" placeholder="Write the concern in your own words if it is not listed"></textarea></label>
           <label class="full-field">Description<textarea name="description" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" placeholder="Include observations, evidence, or a pattern you have noticed" required></textarea></label>
           <h3 class="subsection-title">Supporting file · optional</h3>
@@ -1928,7 +1891,7 @@ function renderAcademicConcern() {
         </fieldset>
 
         <div class="form-submit-bar">
-          <span>Publication date and author are added automatically.</span>
+
           <button class="primary-button" type="submit">Publish academic concern</button>
         </div>
       </form>
@@ -1977,7 +1940,7 @@ function renderSelConcern() {
 
         <fieldset class="concern-section">
           <legend><span>3</span> Social-emotional concerns</legend>
-          <p class="field-help">Select every item that applies. These labels support observation and referral; they are not diagnoses.</p>
+
           <label>MTSS tier<select id="sel-tier" name="tier"><option value="1">Tier 1</option><option value="2">Tier 2</option><option value="3">Tier 3</option></select></label>
           <div class="sel-concern-grid">${renderSelConcernOptions()}</div>
           <label class="full-field">Other concern details <small>Required only when Other is selected</small><textarea name="otherConcern" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3"></textarea></label>
@@ -1986,7 +1949,7 @@ function renderSelConcern() {
         <fieldset class="concern-section">
           <legend><span>4</span> Support or follow-up <small>Optional</small></legend>
           <label class="full-field"><span class="sr-only">Support or follow-up</span><textarea name="followUp" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="4" placeholder="Support offered, people contacted, or next review step"></textarea></label>
-          <p class="visibility-note">Tier 3 and safety concerns require immediate school procedures. The strategy suggestions do not replace urgent referral.</p>
+
         </fieldset>
 
 
@@ -2001,7 +1964,7 @@ function renderSelConcern() {
         </fieldset>
 
         <div class="form-submit-bar">
-          <span>Publication date and author are added automatically.</span>
+
           <button class="primary-button" type="submit">Publish SEL concern</button>
         </div>
       </form>
@@ -2440,7 +2403,7 @@ function updateBehaviorCodePreview() {
   const issueIds = formData.getAll("issueIds");
   const occurrence = Number(formData.get("occurrence"));
   if (!studentIds.length || !issueIds.length || ![1, 2, 3].includes(occurrence)) {
-    preview.innerHTML = "<p>Select at least one student, an occurrence, and one code issue to retrieve the required action.</p>";
+    preview.innerHTML = "";
     return;
   }
 
@@ -2511,6 +2474,8 @@ function render() {
   document.body.classList.toggle("is-student-session", activeUser?.type === "student");
 
   if (!isLoggedIn) {
+    if (houseRankingDialog.open) houseRankingDialog.close();
+    houseRankingDialog.innerHTML = "";
     viewRoot.innerHTML = "";
     topbarHouseScores.innerHTML = "";
     document.querySelector("#sidebar-house-scores").innerHTML = "";
@@ -2573,6 +2538,7 @@ function render() {
   }
 
   sortSelHistory();
+  if (houseRankingDialog.open) renderHouseRanking();
   enhanceFormSteps(viewRoot, activeView, formStepState);
   window.requestAnimationFrame(() => {
     syncCalendarCreationScope();
@@ -2727,26 +2693,24 @@ document.addEventListener("click", async (event) => {
     case "toggle-house-leaders": {
       const houseId = actionTarget.dataset.houseId;
       expandedHouseId = expandedHouseId === houseId ? null : houseId;
-      render();
-      window.requestAnimationFrame(() => {
-        document
-          .querySelector(`[data-action="toggle-house-leaders"][data-house-id="${houseId}"]`)
-          ?.focus({ preventScroll: true });
-      });
+      renderHouseRanking();
+      houseRankingDialog.querySelector(`[data-house-id="${houseId}"]`)?.focus({ preventScroll: true });
       break;
     }
-    case "show-house-leaders": {
-      const houseId = actionTarget.dataset.houseId;
-      expandedHouseId = houseId;
-      if (activeView !== "dashboard") setView("dashboard");
-      else render();
-      window.requestAnimationFrame(() => {
-        document
-          .querySelector(`[data-house-entry="${houseId}"]`)
-          ?.scrollIntoView({ behavior: "smooth", block: "center" });
-      });
+    case "show-house-leaders": openHouseRanking(actionTarget.dataset.houseId); break;
+    case "close-house-ranking": houseRankingDialog.close(); break;
+    case "filter-house-ranking-value": {
+      const valueId = actionTarget.dataset.valueId;
+      houseRankingFilters.valueIds = valueId === "all" ? [] : houseRankingFilters.valueIds.includes(valueId) ? houseRankingFilters.valueIds.filter(id => id !== valueId) : [...houseRankingFilters.valueIds, valueId];
+      renderHouseRanking();
+      houseRankingDialog.querySelector(`[data-value-id="${valueId}"]`)?.focus({ preventScroll: true });
       break;
     }
+    case "reset-house-ranking-dates":
+      houseRankingFilters.from = houseRankingFilters.to = "";
+      renderHouseRanking();
+      houseRankingDialog.querySelector('[data-action="reset-house-ranking-dates"]')?.focus();
+      break;
     case "choose-value":
       selectedValueId = actionTarget.dataset.valueId;
       render();
@@ -2822,6 +2786,7 @@ document.addEventListener("click", async (event) => {
     }
     case "open-student":
     case "select-student":
+      if (houseRankingDialog.open) houseRankingDialog.close();
       if (profileStudentId !== actionTarget.dataset.studentId) {
         resetProfileConcernFilters();
       }

@@ -40,7 +40,7 @@ export function visibleState(state, actor) {
     academicConcerns: [], selConcerns: [], iepDocuments: [],
     selCheckIns: state.selCheckIns.filter(item => item.studentId === actor.id),
     smartGoals: (state.smartGoals ?? []).filter(item => item.studentId === actor.id).map(item => ({ ...item, sourceConcernId: null, sourceConcernType: null })),
-    houseTotals: data.getHouseTotals(state), notifications,
+    houseTotals: data.getHouseTotals(state), houseCoinSummary: data.getHouseCoinSummary(state), notifications,
     leadershipAssignments: state.leadershipAssignments,
     houseMeetingLocations: state.houseMeetingLocations,
     levelUpDocuments: visibleLevelUpDocuments(state, actor),

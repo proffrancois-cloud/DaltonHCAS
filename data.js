@@ -982,6 +982,35 @@ export function getHouseLeaders(state, houseId, limit = 3) {
     .slice(0, limit);
 }
 
+const schoolDay = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit" });
+const matchesHouseFilters = (item, { valueIds = [], from = "", to = "" }) =>
+  (!valueIds.length || valueIds.includes(item.valueId)) && (!from || item.date >= from) && (!to || item.date <= to);
+
+export function getHouseCoinSummary(state) {
+  const studentHouses = new Map(state.students.map(s => [s.id, s.houseId]));
+  const summary = new Map();
+  for (const award of state.awards) {
+    const houseId = studentHouses.get(award.studentId);
+    if (!HOUSES.some(h => h.id === houseId)) continue;
+    const date = schoolDay.format(new Date(award.createdAt));
+    const key = `${houseId}:${date}:${award.valueId}`;
+    const entry = summary.get(key) ?? { houseId, date, valueId: award.valueId, points: 0 };
+    entry.points += award.points;
+    summary.set(key, entry);
+  }
+  return [...summary.values()];
+}
+
+export function getHouseRanking(state, filters = {}) {
+  const totals = Object.fromEntries(HOUSES.map(h => [h.id, 0]));
+  for (const item of state.houseCoinSummary ?? getHouseCoinSummary(state)) {
+    if (matchesHouseFilters(item, filters) && item.houseId in totals) totals[item.houseId] += item.points;
+  }
+  const filteredState = { ...state, awards: state.awards.filter(a => matchesHouseFilters({ ...a, date: schoolDay.format(new Date(a.createdAt)) }, filters)) };
+  return HOUSES.map(house => ({ ...house, points: totals[house.id], leaders: getHouseLeaders(filteredState, house.id), members: state.students.filter(s => s.houseId === house.id).length }))
+    .sort((a, b) => b.points - a.points);
+}
+
 export function getStudentStats(state, studentId) {
   return getValueStats(state.awards.filter((award) => award.studentId === studentId));
 }
