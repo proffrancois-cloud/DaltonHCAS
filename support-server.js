@@ -35,7 +35,8 @@ export function visibleState(state, actor) {
     awards: state.awards.filter(item => item.studentId === actor.id),
     behaviorConcerns: state.behaviorConcerns.filter(item => item.studentIds.includes(actor.id)).map(item => ({
       id: item.id, studentIds: [actor.id], title: item.title, description: item.description,
-      incidentDate: item.incidentDate, publishedAt: item.publishedAt
+      incidentDate: item.incidentDate, publishedAt: item.publishedAt,
+      ...(item.attachmentVisibility === "record" ? { attachmentName: item.attachmentName, attachmentData: item.attachmentData, attachmentVisibility: "record" } : {})
     })),
     academicConcerns: [], selConcerns: [], iepDocuments: [],
     selCheckIns: state.selCheckIns.filter(item => item.studentId === actor.id),

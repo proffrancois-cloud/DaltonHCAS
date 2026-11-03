@@ -664,11 +664,12 @@ export function addBehaviorConcern(state, payload, now = Date.now()) {
   const attachment = normalizeAttachmentPayload(payload);
   const publishedAt = new Date(now).toISOString();
   const deductionPoints = Number(payload.deductionPoints ?? 0);
-  const deductionValueId = String(payload.deductionValueId ?? "").trim();
+  const deductionValueIds = [...new Set(payload.deductionValueIds ?? (payload.deductionValueId ? [payload.deductionValueId] : []))];
+  const deductionValueId = deductionValueIds[0] ?? "";
   if (deductionPoints && !POINT_OPTIONS.includes(deductionPoints)) {
     throw new Error("Choose a valid house-point deduction");
   }
-  if (deductionPoints && !VALUES.some((value) => value.id === deductionValueId)) {
+  if (deductionPoints && (!deductionValueIds.length || deductionValueIds.some(id => !VALUES.some(value => value.id === id)))) {
     throw new Error("Choose the 7C connected to the point deduction");
   }
 
@@ -695,20 +696,21 @@ export function addBehaviorConcern(state, payload, now = Date.now()) {
     location: location === "Other location" ? otherLocation : location,
     publishedAt,
     codeActions: getBehaviorCodeActions(state, studentIds, issueIds, occurrence),
-    deduction: deductionPoints ? { valueId: deductionValueId, points: deductionPoints } : null,
+    deduction: deductionPoints ? { valueId: deductionValueId, valueIds: deductionValueIds, points: deductionPoints } : null,
     ...attachment
   };
 
-  const deductionValue = VALUES.find((value) => value.id === deductionValueId);
+
   const deductionAwards = deductionPoints
     ? studentIds.map((studentId, index) => ({
         id: `behavior-award-${now}-${index}-${(state.awards ?? []).length}`,
         studentId,
         valueId: deductionValueId,
+        valueIds: deductionValueIds,
         teacherId,
         editorIds: normalizeRecordEditorIds(state, payload.editorIds, teacherId),
         points: -deductionPoints,
-        comment: `Behavior demonstrates poor "${deductionValue.name}" value.`,
+        comment: behaviorDeductionSentence(deductionPoints, state.students.find(s => s.id === studentId).name, deductionValueIds),
         sourceType: "behavior-concern",
         sourceConcernId: concern.id,
         createdAt: publishedAt
@@ -729,11 +731,13 @@ export function addAcademicConcern(state, payload, now = Date.now()) {
     "Academic"
   );
   const tier = Number(payload.tier);
-  const issueIds = normalizeStringList(payload.issueIds, 260);
+  const selectedIssues = normalizeStringList(payload.issueIds, 260);
+  const issueIds = selectedIssues.filter(id => id !== "other");
   const otherIssue = normalizeText(payload.otherIssue, MAX_CONCERN_DESCRIPTION_LENGTH);
   const profileId = String(payload.profileId ?? "").trim();
 
   if (![1, 2, 3].includes(tier)) throw new Error("Choose an academic tier");
+  if (selectedIssues.includes("other") && !otherIssue) throw new Error("Describe the academic issue");
   if (!issueIds.length && !otherIssue && !profileId) {
     throw new Error("Choose or describe an academic issue");
   }
@@ -750,7 +754,7 @@ export function addAcademicConcern(state, payload, now = Date.now()) {
     profileId,
     title,
     description,
-    strategies: normalizeStringList(payload.strategies, 260),
+    strategies: normalizeStringList(payload.strategies, 260).map(strategy => strategy === "other" ? "Other" : strategy),
     otherStrategy: normalizeText(payload.otherStrategy, MAX_CONCERN_DESCRIPTION_LENGTH),
     actionDetails: normalizeRequiredText(
       payload.actionDetails,
@@ -782,7 +786,7 @@ export function addSelConcern(state, payload, now = Date.now()) {
   if (concernIds.some((id) => !SEL_CONCERN_OPTIONS.some((option) => option.id === id))) {
     throw new Error("Unknown SEL concern");
   }
-  const otherConcern = normalizeText(payload.otherConcern, MAX_CONCERN_DESCRIPTION_LENGTH);
+  const otherConcern = normalizeText(payload.otherConcern || (concernIds.includes("other") ? description : ""), MAX_CONCERN_DESCRIPTION_LENGTH);
   if (concernIds.includes("other") && !otherConcern) {
     throw new Error("Describe the other SEL concern");
   }
@@ -796,6 +800,7 @@ export function addSelConcern(state, payload, now = Date.now()) {
     id: `sel-${now}-${(state.selConcerns ?? []).length}`,
     studentIds,
     concernIds,
+    tier: Number(payload.tier) || Math.max(...selectedOptions.map(option => option.tier)),
     otherConcern,
     title,
     description,
@@ -982,9 +987,16 @@ export function getHouseLeaders(state, houseId, limit = 3) {
     .slice(0, limit);
 }
 
+export function getAwardValueIds(award) {
+  return Array.isArray(award.valueIds) && award.valueIds.length ? award.valueIds : [award.valueId];
+}
+export function behaviorDeductionSentence(points, studentName, valueIds) {
+  return `${points} points are taken from ${studentName} for lack of ${valueIds.map(id => VALUES.find(v => v.id === id)?.name).filter(Boolean).join(", ")}.`;
+}
+
 const schoolDay = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit" });
 const matchesHouseFilters = (item, { valueIds = [], from = "", to = "" }) =>
-  (!valueIds.length || valueIds.includes(item.valueId)) && (!from || item.date >= from) && (!to || item.date <= to);
+  (!valueIds.length || getAwardValueIds(item).some(id => valueIds.includes(id))) && (!from || item.date >= from) && (!to || item.date <= to);
 
 export function getHouseCoinSummary(state) {
   const studentHouses = new Map(state.students.map(s => [s.id, s.houseId]));
@@ -993,8 +1005,9 @@ export function getHouseCoinSummary(state) {
     const houseId = studentHouses.get(award.studentId);
     if (!HOUSES.some(h => h.id === houseId)) continue;
     const date = schoolDay.format(new Date(award.createdAt));
-    const key = `${houseId}:${date}:${award.valueId}`;
-    const entry = summary.get(key) ?? { houseId, date, valueId: award.valueId, points: 0 };
+    const valueIds = getAwardValueIds(award);
+    const key = `${houseId}:${date}:${[...valueIds].sort().join(",")}`;
+    const entry = summary.get(key) ?? { houseId, date, valueId: award.valueId, ...(valueIds.length > 1 ? { valueIds } : {}), points: 0 };
     entry.points += award.points;
     summary.set(key, entry);
   }
@@ -1019,7 +1032,7 @@ export function getStudentAwards(state, studentId, valueId = null) {
   return state.awards
     .filter(
       (award) =>
-        award.studentId === studentId && (!valueId || award.valueId === valueId)
+        award.studentId === studentId && (!valueId || getAwardValueIds(award).includes(valueId))
     )
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
@@ -1040,9 +1053,9 @@ function getValueStats(awards) {
   );
 
   for (const award of awards) {
-    if (stats[award.valueId]) {
-      stats[award.valueId].recognitions += 1;
-      stats[award.valueId].points += award.points;
+    for (const id of getAwardValueIds(award)) if (stats[id]) {
+      stats[id].recognitions += 1;
+      stats[id].points += award.points;
     }
   }
 
@@ -1065,7 +1078,7 @@ export function getStudentRanking(
       const awards = state.awards.filter(
         (award) =>
           award.studentId === student.id &&
-          (valueId === "all" || award.valueId === valueId) &&
+          (valueId === "all" || getAwardValueIds(award).includes(valueId)) &&
           (!dateFrom || toLocalDateKey(award.createdAt) >= dateFrom) &&
           (!dateTo || toLocalDateKey(award.createdAt) <= dateTo)
       );
@@ -1595,18 +1608,22 @@ function isValidSelCheckIn(checkIn, students) {
 }
 
 function normalizeAttachmentPayload(payload) {
-  const attachmentName = normalizeText(payload.attachmentName, 180);
-  const attachmentData = String(payload.attachmentData ?? "");
-  const attachmentVisibility = payload.attachmentVisibility === "confidential"
-    ? "confidential"
-    : "record";
-  if (attachmentData.length > MAX_ATTACHMENT_DATA_LENGTH) {
-    throw new Error("Attachment is too large");
-  }
-  if ((attachmentName && !attachmentData) || (!attachmentName && attachmentData)) {
-    throw new Error("Attachment is incomplete");
-  }
-  return { attachmentName, attachmentData, attachmentVisibility };
+  const normalizeFile = (name, data) => {
+    name = normalizeText(name, 180);
+    data = String(data ?? "");
+    if (data.length > MAX_ATTACHMENT_DATA_LENGTH) throw new Error("Attachment is too large");
+    if (Boolean(name) !== Boolean(data)) throw new Error("Attachment is incomplete");
+    if (data && !/\.(pdf|doc|docx|ppt|pptx|jpg|jpeg|png)$/i.test(name)) throw new Error("Choose a PDF, Office document or JPG/PNG attachment");
+    if (data && !/^data:(?:application\/(?:pdf|msword|vnd\.[a-z0-9.+-]+|octet-stream)|image\/(?:png|jpeg));base64,[A-Za-z0-9+/]*={0,2}$/i.test(data)) throw new Error("Choose a PDF, Office document or JPG/PNG attachment");
+    return { name, data };
+  };
+  const record = normalizeFile(payload.attachmentName, payload.attachmentData);
+  const confidential = normalizeFile(payload.confidentialAttachmentName, payload.confidentialAttachmentData);
+  return {
+    attachmentName: record.name, attachmentData: record.data,
+    attachmentVisibility: payload.attachmentVisibility === "confidential" ? "confidential" : "record",
+    confidentialAttachmentName: confidential.name, confidentialAttachmentData: confidential.data
+  };
 }
 
 function normalizeStudentIds(state, studentIds) {

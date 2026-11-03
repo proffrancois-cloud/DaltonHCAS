@@ -570,6 +570,45 @@ export const SEL_CONCERN_OPTIONS = [
   }
 ];
 
+// Current MTSS examples. Legacy option IDs remain available to historical records.
+const SEL_TIER_EXAMPLES = {
+  1: [
+    ["Conflict over an item", "peerSupport"], ["Group dynamics", "peerSupport"],
+    ["Friendship issues", "connection"], ["Feeling left out", "connection"],
+    ["Minor disagreements", "peerSupport"], ["Transition difficulties", "regulation"]
+  ],
+  2: [
+    ["Repeated peer conflict", "peerSupport"],
+    ["Isolating themselves from the class or group", "connection"],
+    ["Withdrawal from peers or group activities", "connection"],
+    ["Increased anxiety or emotional dysregulation", "targetedRegulation"],
+    ["Difficulty managing anger or frustration", "targetedRegulation"],
+    ["Ongoing friendship or social skills difficulties", "peerSupport"],
+    ["Frequent emotional check-ins needed", "targetedRegulation"],
+    ["Avoidance of class or school tasks due to emotional distress", "targetedRegulation"],
+    ["Ongoing conflict with a peer or group", "peerSupport"],
+    ["Withdrawal, sadness, or irritability", "targetedRegulation"],
+    ["Frequent visits to the nurse or counselor for emotional reasons", "targetedRegulation"],
+    ["Difficulty with self-regulation", "targetedRegulation"],
+    ["Social skill difficulties", "peerSupport"],
+    ["Changes in behavior or mood that affect learning", "targetedRegulation"]
+  ],
+  3: [
+    ["Self-harm", "intensive"], ["Voicing or writing about dark thoughts", "intensive"],
+    ["Suicidal ideation", "intensive"], ["Threats to safety of self or others", "intensive"],
+    ["Severe emotional dysregulation", "intensive"], ["Panic attacks that do not resolve with support", "intensive"],
+    ["Disclosure of abuse or neglect", "intensive"], ["Acute trauma response", "intensive"],
+    ["Any safety concern", "intensive"]
+  ]
+};
+for (const [tier, examples] of Object.entries(SEL_TIER_EXAMPLES)) {
+  for (const [title, support] of examples) {
+    const existing = SEL_CONCERN_OPTIONS.find(option => option.title.toLowerCase() === title.toLowerCase());
+    if (existing) { existing.listedExample = true; continue; }
+    SEL_CONCERN_OPTIONS.push({ id: `mtss-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-$/, "")}`, title, tier: Number(tier), urgent: Number(tier) === 3, listedExample: true, pdfReference: title, strategies: SEL_SUPPORTS[support] });
+  }
+}
+
 export const TIER_ONE_INSTRUCTIONAL_STRATEGIES =
   BEHAVIOR_STRATEGY_GROUPS.find((group) => group.id === "tier-1-instructional").options;
 

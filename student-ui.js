@@ -1,3 +1,4 @@
+import { getAwardValueIds } from "./data.js";
 export function emptyStudentFilters() {
   return { query: "", house: "", grade: "" };
 }
@@ -25,10 +26,10 @@ export function browseStudents(state, filters, houses, values) {
   const awards = state.awards.filter(a => !ranked || ((!filters.from || day(a.createdAt) >= filters.from) && (!filters.to || day(a.createdAt) <= filters.to)));
   const students = state.students.filter(student => within(filters.house, student.houseId) && within(filters.grade, student.grade)).flatMap(student => {
     const own = awards.filter(a => a.studentId === student.id);
-    const relevant = ranked ? own.filter(a => effectiveValues.includes(a.valueId)) : own;
+    const relevant = ranked ? own.filter(a => getAwardValueIds(a).some(id => effectiveValues.includes(id))) : own;
     if (ranked && !relevant.some(a => a.points > 0)) return [];
     const house = houses.find(h => h.id === student.houseId);
-    if (query && !student.name.toLowerCase().includes(query) && !house?.name.toLowerCase().includes(query) && !own.some(a => a.points > 0 && queryValues.includes(a.valueId))) return [];
+    if (query && !student.name.toLowerCase().includes(query) && !house?.name.toLowerCase().includes(query) && !own.some(a => a.points > 0 && getAwardValueIds(a).some(id => queryValues.includes(id)))) return [];
     return [{ ...student, points: relevant.reduce((sum, a) => sum + a.points, 0), recognitions: relevant.filter(a => a.points > 0).length }];
   });
   if (ranked) students.sort((a, b) => b.points - a.points || a.name.localeCompare(b.name));

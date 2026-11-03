@@ -622,7 +622,7 @@ test("a behavior concern can deduct points from both student and House totals", 
   });
   const deduction = updated.awards.at(-1);
   assert.equal(deduction.points, -20);
-  assert.equal(deduction.comment, 'Behavior demonstrates poor "Collaboration" value.');
+  assert.match(deduction.comment, /20 points are taken from .+ for lack of Collaboration\./);
   assert.equal(getStudentTotal(updated, "random2"), beforeStudent - 20);
   assert.equal(getHouseTotals(updated)[updated.students.find((student) => student.id === "random2").houseId], beforeHouse - 20);
 });

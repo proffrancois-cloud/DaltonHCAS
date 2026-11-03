@@ -74,7 +74,7 @@ test("only the owning student can write or revise a reflection forever; reminder
 test("tier validation rejects stale categories and interventions and preserves mappings", () => {
   assert.ok(selOptions(3).every(o => o.tier === 3));
   assert.throws(() => validateConcernTier("sel", { tier: 1, concernIds: [selOptions(3)[0].id] }));
-  assert.throws(() => validateConcernTier("academic", { tier: 1, profileId: "dyslexia" }));
+  assert.doesNotThrow(() => validateConcernTier("academic", { tier: 1, profileId: "dyslexia" }));
   assert.throws(() => validateConcernTier("behavior", { tier: 1, strategies: ["Fabricated"] }));
   assert.notDeepEqual(academicStrategies(2), academicStrategies(3));
 });

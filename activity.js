@@ -27,6 +27,7 @@ function entry(state, action, kind, record, actorId, at, extra = {}) {
     id: `${action}:${record.id}${creation ? "" : `:${at}:${extra.key ?? ""}`}`,
     actorId, at, type, action, description, recordKind: kind, recordId: record.id,
     participants, points: amount ?? null, valueId: record.valueId ?? record.deduction?.valueId ?? null,
+    valueIds: record.valueIds ?? record.deduction?.valueIds ?? [record.valueId ?? record.deduction?.valueId].filter(Boolean),
     ...extra
   };
 }
@@ -91,7 +92,7 @@ export function filterActivity(events, filters = {}) {
   return events.filter(event => {
     if (filters.type && event.type !== filters.type) return false;
     if (filters.action && event.action !== filters.action) return false;
-    if (filters.valueId && event.valueId !== filters.valueId) return false;
+    if (filters.valueId && !(event.valueIds ?? [event.valueId]).includes(filters.valueId)) return false;
     if (filters.points !== "" && filters.points != null && Number(event.points) !== Number(filters.points)) return false;
     const date = day(event.at);
     if (filters.from && date < filters.from || filters.to && date > filters.to) return false;
