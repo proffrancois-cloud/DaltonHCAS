@@ -504,7 +504,7 @@ test("the Dalton calendar filters Grade 6–12 events for students and keeps the
   assert.equal(teacherEvents.length > studentEvents.length, true);
 });
 
-test("house and lab leaders receive only the calendar editing access assigned to them", () => {
+test("house and lab student leaders cannot edit calendar parameters", () => {
   let state = createInitialState();
   const student = state.students.find((item) => item.grade >= 9);
   const user = { type: "student", id: student.id, studentId: student.id, name: student.name };
@@ -522,14 +522,9 @@ test("house and lab leaders receive only the calendar editing access assigned to
   });
   const houseEvent = events.find((event) => event.type === "house");
   const labEvent = events.find((event) => event.labId);
-  assert.equal(canEditCalendarEvent(state, user, houseEvent), true);
-  assert.equal(canEditCalendarEvent(state, user, labEvent), true);
-
-  state = updateCalendarEventDetails(state, user, labEvent, {
-    description: "Bring a charged laptop.",
-    location: "Lab 304"
-  });
-  assert.equal(state.calendarEventDetails[labEvent.id].description, "Bring a charged laptop.");
+  assert.equal(canEditCalendarEvent(state, user, houseEvent), false);
+  assert.equal(canEditCalendarEvent(state, user, labEvent), false);
+  assert.throws(() => updateCalendarEventDetails(state, user, labEvent, { description: "Changed", location: "Lab 304" }), /cannot edit/);
 });
 
 test("behavior issues exactly cover the 10 Level I and 14 Level II code categories", () => {

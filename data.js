@@ -1280,16 +1280,6 @@ export function canEditCalendarEvent(state, user, event) {
     }
     return false;
   }
-  const student = state.students.find((item) => item.id === user.studentId);
-  if (!student) return false;
-  if (event.type === "house") {
-    return Boolean((event.houseId === student.houseId || event.houseIds?.includes(student.houseId)) && (state.leadershipAssignments?.houseLeaders?.[student.houseId] ?? []).includes(student.id));
-  }
-  if (event.type === "lab" && event.labId) {
-    return (state.leadershipAssignments?.labs ?? [])
-      .find((lab) => lab.id === event.labId)
-      ?.leaderIds.includes(student.id) ?? false;
-  }
   return false;
 }
 
@@ -1602,7 +1592,7 @@ function isValidSelCheckIn(checkIn, students) {
   );
 }
 
-function normalizeAttachmentPayload(payload) {
+export function normalizeAttachmentPayload(payload) {
   const normalizeFile = (name, data) => {
     name = normalizeText(name, 180);
     data = String(data ?? "");

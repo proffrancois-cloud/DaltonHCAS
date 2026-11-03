@@ -7,6 +7,11 @@ export const RESPONSE_LABELS = {
 };
 export const taiwanToday = (value = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
 export const dateValue = validDate;
+function reflectionText(value, label = "reflection") {
+  const text = String(value ?? "").trim();
+  if (!text || text.length > 12000) throw new Error(`Write a ${label} of up to 12,000 characters`);
+  return text;
+}
 export const allConcerns = state => CONCERN_TYPES.flatMap(type => (state[`${type}Concerns`] ?? []).map(item => ({ ...item, type })));
 export const supervisors = state => state.teachers.filter(t => isSupervisor({ ...t, type: "teacher" })).map(t => t.id);
 export function concernRecipients(state, concern) {
@@ -14,6 +19,9 @@ export function concernRecipients(state, concern) {
 }
 export const goalRecipients = (state, goal) => [...new Set([goal.studentId, ...supervisors(state), goal.responsibleTeacherId, state.teachers.some(t => t.id === goal.authorId) ? goal.authorId : null].filter(Boolean))];
 export function reflectionRequired(goal, today = taiwanToday()) { return goal.status !== "active" || goal.dueDate <= today; }
+export function canWriteAdultReflection(state, actor, goal) {
+  return actor?.type === "teacher" && (goal.responsibleTeacherId ? goal.responsibleTeacherId === actor.id : isSupervisor(actor));
+}
 export function goalSchedule(state, goal, input, now) {
   if (input.responsibleTeacherId && !state.teachers.some(t => t.id === input.responsibleTeacherId)) throw new Error("Choose a staff member responsible for follow-up");
   const previous = goal.checkIns ?? [];
@@ -55,6 +63,15 @@ export function followupAlerts(state, today) {
 }
 
 export function applyFollowupCommand(state, actor, action, p, now) {
+  if (action === "behavior-student-response") {
+    const concern = state.behaviorConcerns.find(c => c.id === p.id);
+    if (!concern || actor.type !== "student" || !concern.studentIds.includes(actor.id)) throw new Error("You can respond only to your own behavior notices");
+    const text = reflectionText(p.text, "response");
+    const previous = (concern.studentResponses ?? []).find(r => r.studentId === actor.id);
+    const response = { studentId: actor.id, text, submittedAt: previous?.submittedAt ?? now, updatedAt: now };
+    const updated = { ...concern, studentResponses: [...(concern.studentResponses ?? []).filter(r => r.studentId !== actor.id), response] };
+    return { ...state, behaviorConcerns: state.behaviorConcerns.map(c => c.id === concern.id ? updated : c) };
+  }
   if (action === "concern-response") {
     const concern = state[`${p.type}Concerns`]?.find(c => c.id === p.id);
     if (!concern || actor.type !== "teacher" || !concernRecipients(state, concern).includes(actor.id)) throw new Error("Only notified staff can respond to this concern");
@@ -74,9 +91,13 @@ export function applyFollowupCommand(state, actor, action, p, now) {
   } else if (action === "goal-reflection") {
     if (actor.type !== "student" || actor.id !== goal.studentId) throw new Error("Only the student can edit their reflection, including after submission");
     if (!reflectionRequired(goal, taiwanToday(now))) throw new Error("The final reflection opens when the goal ends or is due");
-    const text = String(p.text ?? "").trim();
-    if (!text || text.length > 12000) throw new Error("Write a reflection of up to 12,000 characters");
+    const text = reflectionText(p.text);
     updated = { ...goal, reflection: { text, studentId: actor.id, submittedAt: goal.reflection?.submittedAt ?? now, updatedAt: now }, updatedAt: now };
+  } else if (action === "goal-adult-reflection") {
+    if (!canWriteAdultReflection(state, actor, goal)) throw new Error("Only the adult responsible for follow-up can write this reflection");
+    if (!reflectionRequired(goal, taiwanToday(now))) throw new Error("The final reflection opens when the goal ends or is due");
+    const text = reflectionText(p.text);
+    updated = { ...goal, adultReflection: { text, teacherId: actor.id, submittedAt: goal.adultReflection?.submittedAt ?? now, updatedAt: now }, updatedAt: now };
   } else if (action === "reflection-reminder") {
     if (!isSupervisor(actor) || !reflectionRequired(goal, taiwanToday(now))) throw new Error("Supervising staff can send reminders once the goal ends or is due");
     const recent = (state.notifications ?? []).some(n => n.kind === "reflection-reminder" && n.goalId === goal.id && Date.parse(now) - Date.parse(n.createdAt) < 60_000);

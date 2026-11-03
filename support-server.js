@@ -4,6 +4,7 @@ import * as followup from "./followup-rules.js";
 import { validateConcernTier } from "./tier-rules.js";
 import { visibleLevelUpDocuments } from "./levelup-resources.js";
 import { recordActivity } from "./activity.js";
+import { applyLeadershipCommand } from "./leadership.js";
 
 export function actorForAccount(state, accountId) {
   const teacher = state.teachers.find(item => item.id === accountId);
@@ -36,6 +37,7 @@ export function visibleState(state, actor) {
     behaviorConcerns: state.behaviorConcerns.filter(item => item.studentIds.includes(actor.id)).map(item => ({
       id: item.id, studentIds: [actor.id], title: item.title, description: item.description,
       incidentDate: item.incidentDate, publishedAt: item.publishedAt,
+      studentResponses: (item.studentResponses ?? []).filter(r => r.studentId === actor.id),
       ...(item.attachmentVisibility === "record" ? { attachmentName: item.attachmentName, attachmentData: item.attachmentData, attachmentVisibility: "record" } : {})
     })),
     academicConcerns: [], selConcerns: [], iepDocuments: [],
@@ -45,6 +47,8 @@ export function visibleState(state, actor) {
     leadershipAssignments: state.leadershipAssignments,
     houseMeetingLocations: state.houseMeetingLocations,
     levelUpDocuments: visibleLevelUpDocuments(state, actor),
+    eventActivities: (state.eventActivities ?? []).filter(a => calendar.some(e => e.id === a.eventId)),
+    leadershipTasks: (state.leadershipTasks ?? []).filter(t => t.leaderIds.includes(actor.id)),
     customCalendarEvents: (state.customCalendarEvents ?? []).filter(base => calendar.some(item => item.id === base.id || item.id.startsWith(`${base.id}::`))),
     calendarEventDetails: Object.fromEntries(calendar.map(item => [item.id, {
       startTime: item.startTime, endTime: item.endTime, location: item.location,
@@ -120,6 +124,7 @@ function applyCommand(state, actor, action, p, now) {
     case "lab-add": adminOnly(actor); return data.addLabAssignment(state, p);
     case "lab-remove": adminOnly(actor); return data.removeLabAssignment(state, p.id);
     case "event-add": return data.addCustomCalendarEvent(state, actor, p, now);
+    case "event-activity-add": case "leader-task-add": return applyLeadershipCommand(state, actor, action, p, iso);
     case "event-update": {
       const event = data.getCalendarEvents(state, { user: actor }).find(item => item.id === p.id);
       if (!event) throw new Error("Event not available in your calendar");
@@ -150,7 +155,7 @@ function applyCommand(state, actor, action, p, now) {
       }
       return { ...state, smartGoals: state.smartGoals.map(item => item.id === goal.id ? updated : item) };
     }
-    case "concern-response": case "goal-schedule": case "goal-reflection": case "reflection-reminder":
+    case "concern-response": case "behavior-student-response": case "goal-schedule": case "goal-reflection": case "goal-adult-reflection": case "reflection-reminder":
       return followup.applyFollowupCommand(state, actor, action, p, iso);
     case "trusted-adult": case "trusted-adult-add": case "trusted-adult-remove": {
       const student = state.students.find(item => item.id === actor.id);

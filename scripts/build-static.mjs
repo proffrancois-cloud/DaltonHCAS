@@ -20,6 +20,8 @@ const publicEntries = [
   "support-ui.js",
   "levelup-resources.js",
   "pdf-reader.js",
+  "leadership.js",
+  "leadership-ui.js",
   "followup-ui.js",
   "followup-rules.js",
   "tier-rules.js",

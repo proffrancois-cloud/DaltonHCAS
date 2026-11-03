@@ -58,9 +58,11 @@ import {
   updateTeacherAccountStatus as localUpdateTeacherAccountStatus
 } from "./data.js";
 import { cloudEnabled, cloudLogin, cloudCall, cloudChangePassword, cloudLogout, hasCloudSession } from "./cloud-client.js";
+import { leadershipScopes } from "./leadership.js";
+import { renderLeadershipWorkspace, renderEventActivities } from "./leadership-ui.js";
 import { SMART_FIELDS, isSupervisor } from "./support-rules.js";
 import { renderIepHeart, renderSupportProfile, renderSupportDocuments, renderTrustedAdults } from "./support-ui.js";
-import { renderFollowupNotifications as renderSupportNotifications, responseHistory, checkInRow } from "./followup-ui.js";
+import { renderFollowupNotifications as renderSupportNotifications, responseHistory, checkInRow, behaviorStudentResponse } from "./followup-ui.js";
 import { academicStrategies, behavioralStrategies, selOptions } from "./tier-rules.js";
 import { enablePhonePush, disablePhonePush, initializePhonePush } from "./push-client.js";
 import { renderLevelUpAttachments, canReadLevelUpDocument } from "./levelup-resources.js";
@@ -151,6 +153,7 @@ let calendarTeacherGrade = "";
 let selectedCalendarEventId = null;
 let calendarCreateOpen = false;
 let selCheckInOpen = false;
+let leadershipDateFrom = "", leadershipDateTo = "";
 let trustedAdultPickerOpen = false;
 let lastCreatedAccount = null;
 let recordEditTarget = null;
@@ -274,6 +277,9 @@ async function handleSupportClick(button) {
     dialog.querySelector("[data-trusted-remove-error]").textContent = "";
     dialog.querySelector("[data-trusted-remove-name]").textContent = `Remove ${getTeacher(button.dataset.teacherId)?.name ?? "this person"} from your trusted adults?`;
     dialog.showModal();
+  } else if (action === "open-leadership-notice") {
+    const notice = state.notifications?.find(n => n.key === button.dataset.notificationKey);
+    if (notice) openLeadershipNotice(notice);
   } else if (action === "urgent-support") {
     const sent = await runCloudAction("urgent-support");
     if (sent) showToast("Your support request was sent to supervising staff and your trusted adults.");
@@ -310,6 +316,12 @@ async function handleSupportSubmit(form) {
       if (!file?.size || !/\.pdf$/i.test(file.name) || file.size > 10 * 1024 * 1024) throw new Error("Choose a PDF up to 10 MB");
       const encoded = await readFileAsDataUrl(file, 10 * 1024 * 1024, "Support-plan PDF");
       result = await cloudCall("iep-upload", { studentId: form.dataset.studentId, name: file.name, kind: formData.get("kind"), base64: encoded.split(",")[1] });
+    } else if (["event-activity-add", "leader-task-add"].includes(type)) {
+      const file = formData.get("attachment");
+      const attachment = file?.size ? { attachmentName: file.name, attachmentData: await readFileAsDataUrl(file, 750_000, "Attachment") } : {};
+      const payload = type === "event-activity-add" ? { eventId: form.dataset.eventId, text: formData.get("text"), ...attachment }
+        : { scopeKey: form.dataset.scopeKey, title: formData.get("title"), description: formData.get("description"), deadline: formData.get("deadline"), leaderIds: formData.getAll("leaderIds"), ...attachment };
+      result = await cloudCall(type, { payload });
     } else {
       const payload = type === "goal-add" ? {
         studentId: form.dataset.studentId, title: formData.get("title"), dueDate: formData.get("dueDate"),
@@ -319,7 +331,8 @@ async function handleSupportSubmit(form) {
         responsibleTeacherId: formData.get("responsibleTeacherId"), checkIns: readCheckIns(form)
       } : type === "goal-field" ? { id: form.dataset.goalId, field: form.dataset.field, text: formData.get("text"), dueDate: formData.get("dueDate") || undefined }
         : type === "goal-schedule" ? { id: form.dataset.goalId, responsibleTeacherId: formData.get("responsibleTeacherId"), checkIns: readCheckIns(form) }
-        : type === "goal-reflection" ? { id: form.dataset.goalId, text: formData.get("text") }
+        : ["goal-reflection", "goal-adult-reflection"].includes(type) ? { id: form.dataset.goalId, text: formData.get("text") }
+        : type === "behavior-student-response" ? { id: form.dataset.concernId, text: formData.get("text") }
         : type === "goal-close" ? { id: form.dataset.goalId, status: formData.get("status"), note: formData.get("note") }
         : type === "support-plan-save" ? { studentId: form.dataset.studentId, info: formData.get("info") }
         : type === "account-reset" ? { id: formData.get("id") } : { teacherId: formData.get("teacherId") };
@@ -361,6 +374,20 @@ function openSupportRecord(studentId, recordId = "") {
     target.scrollIntoView({ behavior: "smooth", block: "center" });
     target.tabIndex = -1; target.focus({ preventScroll: true });
   });
+}
+
+function openLeadershipNotice(notice) {
+  if (notice.eventId) {
+    setView("dashboard");
+    calendarWeekStart = startOfCalendarWeek(notice.eventDate);
+    if (activeUser.type === "teacher") calendarTeacherGrade = "all";
+    selectedCalendarEventId = notice.eventId;
+    render();
+    requestAnimationFrame(() => document.querySelector(".calendar-event-panel")?.focus());
+  } else if (notice.taskId) {
+    setView(`my-${notice.scopeType}`);
+    requestAnimationFrame(() => document.getElementById(`task-${notice.taskId}`)?.scrollIntoView({ block: "center" }));
+  }
 }
 
 async function runCloudAction(action, payload = {}) {
@@ -406,7 +433,7 @@ function getViewFromHash() {
     "academic-concern",
     "sel-concern",
     "students",
-    "administration"
+    "administration", "my-house", "my-lab"
   ].includes(hash)
     ? hash
     : "dashboard";
@@ -415,7 +442,7 @@ function getViewFromHash() {
 function setView(view, options = {}) {
   if (!activeUser) return;
   if (view === "activity") view = "dashboard";
-  if (activeUser.type === "student" && !["dashboard", "students"].includes(view)) view = "dashboard";
+  if (activeUser.type === "student" && !["dashboard", "students", "my-house", "my-lab"].includes(view)) view = "dashboard";
   if (view === "administration" && !canAccessAdministration()) view = "dashboard";
   if (view !== activeView && !options.studentId) resetRosterFilters(view);
   if (view !== activeView) for (const key of formStepState.keys()) if (key.startsWith(`${view}:`)) formStepState.delete(key);
@@ -429,6 +456,7 @@ function setView(view, options = {}) {
     }
   }
   activeView = view;
+  selectedCalendarEventId = null;
   recordEditTarget = null;
   if (options.studentId) {
     if (profileStudentId !== options.studentId) resetProfileConcernFilters();
@@ -825,7 +853,7 @@ function renderCalendarEventPanel(events) {
   const resourceUrl = /^https?:\/\//i.test(event.resourceUrl ?? "") ? event.resourceUrl : "";
   return `
     <div class="modal-backdrop" data-action="close-calendar-event">
-      <section class="modal-panel calendar-event-panel" role="dialog" aria-modal="true" aria-labelledby="calendar-event-panel-title" data-modal-panel>
+      <section class="modal-panel calendar-event-panel" role="dialog" aria-modal="true" aria-labelledby="calendar-event-panel-title" tabindex="-1" data-modal-panel>
         <button class="detail-close" type="button" data-action="close-calendar-event" aria-label="Close event details">×</button>
         <div class="calendar-event-panel-heading">
           <span class="calendar-type-badge is-${event.type}">${getCalendarTypeLabel(event.type)}</span>
@@ -836,13 +864,14 @@ function renderCalendarEventPanel(events) {
         </div>
         ${event.teacherIds?.length ? `<p><strong>Teachers:</strong> ${event.teacherIds.map(id => escapeHtml(getTeacher(id)?.name ?? "")).filter(Boolean).join(", ")}</p>` : ""}
         ${event.leaderIds?.length ? `<p><strong>House Captain/Lab Leader:</strong> ${event.leaderIds.map(id => escapeHtml(getStudent(id)?.name ?? "")).filter(Boolean).join(", ")}</p>` : ""}
-        ${event.description ? `<p class="calendar-event-description">${escapeHtml(event.description)}</p>` : '<p class="calendar-event-description is-empty">No additional instructions have been shared yet.</p>'}
+        ${event.description ? `<p class="calendar-event-description">${escapeHtml(event.description)}</p>` : ""}
         <div class="calendar-resources">
           ${renderLevelUpAttachments(state, activeUser, event, escapeHtml)}
           ${resourceUrl ? `<a href="${escapeHtml(resourceUrl)}" target="_blank" rel="noopener">Open shared resource</a>` : ""}
           ${event.attachmentData ? `<a href="${escapeHtml(event.attachmentData)}" download="${escapeHtml(event.attachmentName || "event-file")}">Download ${escapeHtml(event.attachmentName || "attached file")}</a>` : ""}
           ${event.updatedBy ? `<small>Updated by ${escapeHtml(event.updatedBy)} · ${formatDateTime(event.updatedAt)}</small>` : ""}
         </div>
+        ${["lab", "house"].includes(event.type) ? renderEventActivities(state, activeUser, event, escapeHtml) : ""}
         ${editable ? `
           <form class="calendar-event-form" id="calendar-event-form" data-event-id="${escapeHtml(event.id)}">
             <div class="form-grid two-columns">
@@ -961,7 +990,7 @@ function renderCalendarEventCreateModal() {
     <div class="modal-backdrop" data-action="close-calendar-create">
       <section class="modal-panel calendar-create-modal" role="dialog" aria-modal="true" aria-labelledby="calendar-create-title" data-modal-panel>
         <button class="detail-close" type="button" data-action="close-calendar-create" aria-label="Close event creator">×</button>
-        <div class="modal-heading"><span class="calendar-type-badge is-house">Calendar</span><h2 id="calendar-create-title">Create an event</h2><p>House Captain/Lab Leader accounts may edit relevant events after they appear in their calendar.</p></div>
+        <div class="modal-heading"><span class="calendar-type-badge is-house">Calendar</span><h2 id="calendar-create-title">Create an event</h2><p>Captains and lab leaders can share activities for their assigned sessions.</p></div>
         <form id="custom-calendar-event-form" class="compact-admin-form calendar-create-form">
           <label>Date<input name="date" type="date" required /></label>
           <label>Title<input name="title" required maxlength="120" /></label>
@@ -1072,7 +1101,6 @@ function renderSchoolCalendar() {
           return `<article class="calendar-day ${isToday ? "is-today" : ""}"><header><span>${new Intl.DateTimeFormat("en", { weekday: "short" }).format(dateObject)}</span><strong>${dateObject.getDate()}</strong></header><div class="calendar-day-events">${dateEvents.map(renderCalendarEvent).join("") || '<span class="calendar-empty">No scheduled event</span>'}</div></article>`;
         }).join("")}
       </div>`}
-      ${renderCalendarEventPanel(events)}
     </section>
     ${renderCalendarEventCreateModal()}
   `;
@@ -1980,7 +2008,7 @@ function formatStudentCount(count) {
 function renderStudents() {
   if (activeUser?.type === "student") {
     const student = getActiveStudent();
-    return `<div class="page">${renderPageHeader("My profile", "")}<section class="panel"><div class="profile-heading student-own-profile-heading"><img src="${getHouse(student.houseId).image}" alt="${getHouse(student.houseId).name}"/>${renderTrustedAdults(state, activeUser, student, escapeHtml, { pickerOpen: trustedAdultPickerOpen })}<div class="profile-total"><strong>${getStudentTotal(state,student.id)}</strong><span>points</span></div></div>${renderStudentCoinTable(student)}<section class="profile-record-section"><h3>Behavior notices</h3>${state.behaviorConcerns.map(item => `<article id="concern-${item.id}"><h4>${escapeHtml(item.title)}</h4><time>${formatDateOnly(item.incidentDate)}</time><p>${escapeHtml(item.description)}</p>${renderConcernAttachment(item, "record")}</article>`).join("") || '<p>No behavior notices.</p>'}</section>${renderSupportProfile(state, activeUser, student, escapeHtml)}</section></div>`;
+    return `<div class="page">${renderPageHeader("My profile", "")}<section class="panel"><div class="profile-heading student-own-profile-heading"><img src="${getHouse(student.houseId).image}" alt="${getHouse(student.houseId).name}"/>${renderTrustedAdults(state, activeUser, student, escapeHtml, { pickerOpen: trustedAdultPickerOpen })}<div class="profile-total"><strong>${getStudentTotal(state,student.id)}</strong><span>points</span></div></div>${renderStudentCoinTable(student)}<section class="profile-record-section"><h3>Behavior notices</h3>${state.behaviorConcerns.map(item => `<article id="concern-${item.id}"><h4>${escapeHtml(item.title)}</h4><time>${formatDateOnly(item.incidentDate)}</time><p>${escapeHtml(item.description)}</p>${renderConcernAttachment(item, "record")}${behaviorStudentResponse(state, activeUser, item, student.id, escapeHtml)}</article>`).join("") || '<p>No behavior notices.</p>'}</section>${renderSupportProfile(state, activeUser, student, escapeHtml)}</section></div>`;
   }
   const filteredStudents = getFilteredStudents();
 
@@ -2108,6 +2136,7 @@ function renderBehaviorConcernsTable(student) {
                         <td>
                           <strong>${escapeHtml(concern.title)}</strong>
                           <p class="record-description">${escapeHtml(concern.description)}</p>
+                          ${behaviorStudentResponse(state, activeUser, concern, student.id, escapeHtml)}
                           <details class="record-details">
                             <summary>View teacher details</summary>
                             ${responseHistory(state, activeUser, concern, escapeHtml)}
@@ -2489,7 +2518,7 @@ function render() {
     return;
   }
 
-  if (activeUser.type === "student" && !["dashboard", "students"].includes(activeView)) {
+  if (activeUser.type === "student" && !["dashboard", "students", "my-house", "my-lab"].includes(activeView)) {
     activeView = "dashboard";
     window.history.replaceState(null, "", "#dashboard");
   }
@@ -2497,6 +2526,11 @@ function render() {
     activeView = "dashboard";
     window.history.replaceState(null, "", "#dashboard");
   }
+  const scopes = leadershipScopes(state, activeUser);
+  document.querySelectorAll("[data-leadership-nav]").forEach(button => {
+    button.hidden = !scopes.some(scope => scope.type === button.dataset.leadershipNav);
+  });
+  if (["my-house", "my-lab"].includes(activeView) && !scopes.some(scope => scope.type === activeView.slice(3))) activeView = "dashboard";
   teacherName.textContent = activeUser.name;
   document.querySelector("#mobile-staff-name").textContent = activeUser.name;
   teacherAvatar.alt = `${activeUser.name}'s Dalton Plan House Teams emblem`;
@@ -2533,10 +2567,11 @@ function render() {
   else if (activeView === "academic-concern") viewRoot.innerHTML = renderAcademicConcern();
   else if (activeView === "sel-concern") viewRoot.innerHTML = renderSelConcern();
   else if (activeView === "students") viewRoot.innerHTML = renderStudents();
+  else if (["my-house", "my-lab"].includes(activeView)) viewRoot.innerHTML = renderLeadershipWorkspace(state, activeUser, activeView.slice(3), escapeHtml, { from: leadershipDateFrom, to: leadershipDateTo });
   else if (activeView === "administration") viewRoot.innerHTML = renderAdministration();
   else viewRoot.innerHTML = renderDashboard();
 
-  viewRoot.insertAdjacentHTML("beforeend", renderRecordEditModal() + renderSelCheckInModal());
+  viewRoot.insertAdjacentHTML("beforeend", renderRecordEditModal() + renderSelCheckInModal() + renderCalendarEventPanel(getCalendarEvents(state, { user: activeUser })));
   const pushStatus = viewRoot.querySelector("[data-push-status]");
   if (pushStatus) pushStatus.textContent = phonePushStatus;
   if (cloudEnabled && ["behavior-concern", "academic-concern", "sel-concern"].includes(activeView)) {
@@ -2623,7 +2658,7 @@ document.addEventListener("click", async (event) => {
     case "open-calendar-event":
       selectedCalendarEventId = actionTarget.dataset.eventId;
       render();
-      window.requestAnimationFrame(() => document.querySelector(".calendar-event-panel")?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+      window.requestAnimationFrame(() => document.querySelector(".calendar-event-panel")?.focus());
       break;
     case "open-calendar-create":
       calendarCreateOpen = true;
@@ -2905,6 +2940,14 @@ window.addEventListener("resize", positionDeductionPicker);
 
 viewRoot.addEventListener("invalid", event => revealInvalidField(event.target), true);
 viewRoot.addEventListener("keydown", event => {
+  const panel = viewRoot.querySelector(".calendar-event-panel");
+  if (panel && event.key === "Escape") { selectedCalendarEventId = null; render(); return; }
+  if (panel && event.key === "Tab") {
+    const controls = [...panel.querySelectorAll('button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled])')].filter(el => el.getClientRects().length);
+    const first = controls[0], last = controls.at(-1);
+    if (event.shiftKey && [panel, first].includes(document.activeElement)) { event.preventDefault(); last?.focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+  }
   if (event.key === "Enter" && event.target.matches("[data-editor-search]")) event.preventDefault();
 });
 
@@ -3196,7 +3239,7 @@ viewRoot.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(event.target);
     const eventId = event.target.dataset.eventId;
-    const calendarEvent = getVisibleCalendarEvents().find((item) => item.id === eventId);
+    const calendarEvent = getCalendarEvents(state, { user: activeUser }).find((item) => item.id === eventId);
     if (!calendarEvent) return;
     const file = formData.get("attachment");
     let attachmentData = calendarEvent.attachmentData ?? "";
@@ -3408,5 +3451,15 @@ if (cloudEnabled) {
 
 initializePhonePush(() => activeUser, noticeId => {
   const n = state.notifications?.find(item => item.id === noticeId);
-  if (n && activeUser && !mustChangePassword) openSupportRecord(n.studentId, n.goalId ? `${n.kind.includes("reflection") || n.kind === "goal-final-review" ? "reflection" : "goal"}-${n.goalId}` : n.awardId ? `award-${n.awardId}` : n.concernId || n.concernIds?.length ? `concern-${n.concernId ?? n.concernIds.at(-1)}` : "");
+  if (n && activeUser && !mustChangePassword) {
+    if (["event-activity", "leader-task"].includes(n.kind)) openLeadershipNotice(n);
+    else openSupportRecord(n.studentId, n.goalId ? `${n.kind.includes("reflection") || n.kind === "goal-final-review" ? "reflection" : "goal"}-${n.goalId}` : n.awardId ? `award-${n.awardId}` : n.concernId || n.concernIds?.length ? `concern-${n.concernId ?? n.concernIds.at(-1)}` : "");
+  }
+});
+
+viewRoot.addEventListener("change", event => {
+  if (!event.target.matches("[data-leadership-date]")) return;
+  if (event.target.dataset.leadershipDate === "from") leadershipDateFrom = event.target.value;
+  else leadershipDateTo = event.target.value;
+  render();
 });

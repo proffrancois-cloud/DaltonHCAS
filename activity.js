@@ -6,7 +6,7 @@ export const ACTIVITY_ACTIONS = {
   "award-add": "Sent points", "award-update": "Edited recognition", "award-remove": "Unsent points",
   "concern-add": "Published concern", "concern-update": "Edited concern", "concern-response": "Responded to concern",
   "goal-add": "Submitted SMART goal", "goal-field": "Updated SMART response", "goal-access": "Changed SMART editing access",
-  "goal-close": "Reviewed SMART goal", "goal-schedule": "Updated SMART schedule", "reflection-reminder": "Sent reflection reminder"
+  "goal-close": "Reviewed SMART goal", "goal-adult-reflection": "Recorded adult final reflection", "goal-schedule": "Updated SMART schedule", "reflection-reminder": "Sent reflection reminder"
 };
 const concernTypes = ["behavior", "academic", "sel"];
 const validDate = value => typeof value === "string" && Number.isFinite(Date.parse(value));
