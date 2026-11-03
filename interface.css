@@ -333,3 +333,106 @@ legend > span, .concern-section > legend > span { width: 22px; height: 22px; bac
   .login-form { padding: 24px; }
   .login-form input { font-size: 16px; min-height: 44px; }
 }
+
+/* A single, compact crest presentation for every student picker and roster. */
+.student-controls {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  column-gap: 16px;
+  row-gap: 6px;
+  align-items: center;
+}
+.student-controls > .search-field { grid-column: 1; grid-row: 1 / 3; width: 100%; margin: 0; }
+.student-controls > .house-filters { grid-column: 2; grid-row: 1; }
+.student-controls > .grade-filters { grid-column: 2; grid-row: 2; margin: 0; }
+.student-controls :is(.house-filters, .grade-filters) { min-width: 0; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
+.student-controls :is(.house-filters, .grade-filters) button { flex: none; }
+.student-controls input { width: 100%; min-width: 0; }
+.student-crest-grid, .send-student-options, .concern-student-grid, .ranking-crest-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  align-content: start;
+  align-items: start;
+  gap: 4px;
+  padding: 8px;
+}
+.send-student-options, .concern-student-grid { max-height: 360px; overflow-y: auto; }
+.student-crest, .send-student-option {
+  display: grid;
+  grid-template-columns: 1fr;
+  place-items: center;
+  min-height: 0;
+  width: 100%;
+  padding: 2px;
+  gap: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: center;
+}
+.student-crest-visual { width: 112px; max-width: 100%; margin: 0 auto; }
+.student-crest-name { font-size: 22px; letter-spacing: .01em; }
+.student-crest-grade { font-size: 20px; font-weight: 500; letter-spacing: .02em; }
+.student-points-badge { min-width: 24px; height: 20px; padding: 0 4px; font-size: 10px; font-weight: 600; }
+.student-crest:hover .student-crest-visual { transform: none; }
+.send-student-option.is-selected { background: var(--selection-gold); }
+.send-student-option.is-selected .student-crest-name { font-style: italic; }
+.send-student-option.is-selected :is(.student-crest-name, .student-crest-grade),
+.concern-student-option:has(input:checked) :is(.student-crest-name, .student-crest-grade) { fill: white; stroke: none; }
+.concern-student-option { display: block; }
+.concern-student-option > .student-crest {
+  display: grid;
+  grid-template-columns: 1fr;
+  min-height: 0;
+  padding: 2px;
+  border: 0;
+  background: transparent;
+  gap: 0;
+}
+.concern-student-option > input:checked + .student-crest { background: var(--selection-gold); }
+.concern-crest-item[hidden] { display: none; }
+.student-crest-item > .iep-heart { right: 0; bottom: 6px; min-width: 28px; min-height: 28px; font-size: 14px; }
+.student-crest-grid .no-filter-results { grid-column: 1 / -1; }
+.no-filter-results { min-height: 90px; padding: 18px 12px; font-size: 12px; }
+.no-filter-results p { margin: 0 0 8px; }
+.calendar-filter-prompt { padding: 10px 16px 18px; color: var(--muted); font-size: 12px; }
+.dashboard-layout { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
+.dashboard-layout > :is(.scoreboard-panel, .student-ranking-panel) { grid-column: auto; height: 480px; margin: 0; display: flex; flex-direction: column; min-width: 0; }
+.dashboard-layout .panel-heading { height: 54px; min-height: 54px; flex: none; }
+.dashboard-layout .panel-heading .text-button { min-height: 30px; }
+.send-summary .summary-house { position: relative; display: grid; grid-template-columns: 1fr; padding: 8px; background: white; border-bottom: 1px solid var(--line); }
+.send-summary-student { display: grid; place-items: center; }
+.send-summary .remove-student-button { position: absolute; top: 8px; right: 8px; }
+.scoreboard-panel > .house-list { flex: 1; min-height: 0; overflow-y: auto; }
+.student-ranking-panel > .student-controls { grid-template-columns: minmax(120px, .8fr) minmax(0, 1.6fr); margin: 0; padding: 12px; column-gap: 10px; }
+.student-ranking-panel .house-filters button, .student-ranking-panel .grade-filters button { min-height: 30px; padding: 4px 7px; font-size: 11px; }
+.student-ranking-panel .house-filters img { width: 18px; height: 18px; }
+.student-ranking-panel .ranking-filters { display: grid; grid-template-columns: .9fr 1fr 1fr; padding: 0 12px 12px; gap: 8px; }
+.student-ranking-panel .ranking-filters label { min-width: 0; font-size: 11px; }
+.student-ranking-panel .ranking-filters :is(input, select) { width: 100%; min-width: 0; padding: 6px; font-size: 12px; }
+.ranking-results { flex: 1; min-height: 0; overflow-y: auto; }
+.ranking-crest-grid { list-style: none; margin: 0; }
+.ranking-crest-grid > li { position: relative; min-width: 0; text-align: center; }
+.ranking-crest-grid .ranking-position { position: absolute; left: 4px; top: 4px; color: var(--muted); font-size: 11px; }
+.ranking-crest-grid > li > small { display: block; color: var(--muted); font-size: 10px; margin-top: -2px; }
+.ranking-crest-grid .student-crest { padding: 2px; }
+.teacher-activity-section { margin-top: 24px; }
+.teacher-activity-section > h2 { margin: 0 0 14px; font-size: 16px; }
+.profile-record-action { white-space: nowrap; }
+.record-heading-tools { flex-wrap: wrap; }
+@media (max-width: 1000px) {
+  .dashboard-layout { grid-template-columns: 1fr; }
+}
+@media (max-width: 759px) {
+  .student-controls, .student-ranking-panel > .student-controls { grid-template-columns: 160px minmax(0, 1fr); column-gap: 10px; }
+  .student-controls .search-field { gap: 4px; padding-inline: 6px; }
+  .student-controls .search-field input { min-height: 42px; padding-inline: 2px; }
+  .student-controls .search-field svg { width: 16px; margin-left: 0; }
+  .student-controls :is(.house-filters, .grade-filters) button { min-height: 40px; }
+  .student-ranking-panel .ranking-filters :is(input, select) { font-size: 16px; }
+  .student-ranking-panel .ranking-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .student-ranking-panel .ranking-filters > label:first-child { grid-column: 1 / -1; }
+  .student-ranking-panel .house-filters button, .student-ranking-panel .grade-filters button { min-height: 40px; }
+  .student-crest-grid, .send-student-options, .concern-student-grid, .ranking-crest-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 2px; padding: 6px; }
+  .record-section-heading { flex-direction: row; flex-wrap: wrap; align-items: center; }
+}

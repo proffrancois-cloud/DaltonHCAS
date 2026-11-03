@@ -39,6 +39,12 @@ field they clarify, and collapse secondary access details instead of repeating p
 under every record. Keep phone controls comfortable to tap and forms at least 16px on
 mobile. Shared presentation rules live in `interface.css`; avoid adding another theme layer.
 
+Student pickers, the roster and student rankings share a compact 112px crest with a
+curved name above and grade below. Roster filters start unselected, beside the name
+search; results appear after a search or explicit filter choice. Keep House points
+and student ranking in equal dashboard columns and personal activity below them.
+Profile creation actions belong in their corresponding record headers.
+
 ## Accessibility & Inclusion
 
 Use clear contrast, readable type, large click targets, semantic buttons and labels, visible focus states, and reduced-motion support. Do not require users to configure accessibility settings before using the app.

@@ -67,7 +67,9 @@ import { academicStrategies, behavioralStrategies, selOptions } from "./tier-rul
 import { enablePhonePush, disablePhonePush, initializePhonePush } from "./push-client.js";
 import { renderLevelUpAttachments, canReadLevelUpDocument } from "./levelup-resources.js";
 import { openPdfReader } from "./pdf-reader.js";
+import { emptyStudentFilters, hasStudentFilter, matchingStudents, studentCrestVisual } from "./student-ui.js";
 let phonePushStatus = "";
+let crestInstance = 0;
 
 let pendingCloudCommand = null;
 let cloudSnapshot = null;
@@ -115,15 +117,15 @@ let activeView = getViewFromHash();
 let selectedValueId = null;
 let selectedPoints = null;
 let sendStudentIds = [];
-let sendGradeFilter = "all";
-let sendHouseFilter = "all";
+let sendGradeFilter = "";
+let sendHouseFilter = "";
 let sendStudentQuery = "";
 let sendComment = "";
 let sendEditorIds = [];
 let profileStudentId = null;
 let studentQuery = "";
-let houseFilter = "all";
-let studentGradeFilter = "all";
+let houseFilter = "";
+let studentGradeFilter = "";
 let expandedHouseId = null;
 let expandedStudentValueId = null;
 const profileConcernFilters = {
@@ -133,20 +135,20 @@ const profileConcernFilters = {
 };
 let expandedTeacherValueId = null;
 let lastConfirmation = null;
-let rankingValueFilter = "all";
-let rankingGradeFilter = "all";
+let rankingValueFilter = "";
+let rankingFilters = emptyStudentFilters();
 let rankingDateFrom = "";
 let rankingDateTo = "";
 let rankingExpanded = false;
 let lastConcernConfirmation = null;
 let concernStudentPreset = null;
 const concernStudentFilters = {
-  "behavior-concern": { query: "", house: "all", grade: "all" },
-  "academic-concern": { query: "", house: "all", grade: "all" },
-  "sel-concern": { query: "", house: "all", grade: "all" }
+  "behavior-concern": emptyStudentFilters(),
+  "academic-concern": emptyStudentFilters(),
+  "sel-concern": emptyStudentFilters()
 };
 let calendarWeekStart = getInitialCalendarWeek();
-let calendarTeacherGrade = "all";
+let calendarTeacherGrade = "";
 let selectedCalendarEventId = null;
 let calendarCreateOpen = false;
 let selCheckInOpen = false;
@@ -363,6 +365,7 @@ function saveUserSession(user) {
 
 function getViewFromHash() {
   const hash = window.location.hash.replace("#", "");
+  if (hash === "activity") return "dashboard";
   return [
     "dashboard",
     "send",
@@ -370,8 +373,7 @@ function getViewFromHash() {
     "academic-concern",
     "sel-concern",
     "students",
-    "administration",
-    "activity"
+    "administration"
   ].includes(hash)
     ? hash
     : "dashboard";
@@ -379,13 +381,26 @@ function getViewFromHash() {
 
 function setView(view, options = {}) {
   if (!activeUser) return;
+  if (view === "activity") view = "dashboard";
   if (activeUser.type === "student" && !["dashboard", "students"].includes(view)) view = "dashboard";
   if (view === "administration" && !canAccessAdministration()) view = "dashboard";
+  if (view !== activeView && !options.studentId) resetRosterFilters(view);
+  if (concernStudentFilters[view] && !options.presetStudentId) concernStudentPreset = null;
+  if (options.presetStudentId) {
+    const student = getStudent(options.presetStudentId);
+    if (view === "send") sendStudentQuery = student?.name ?? "";
+    else if (concernStudentFilters[view]) {
+      concernStudentPreset = options.presetStudentId;
+      concernStudentFilters[view] = { ...emptyStudentFilters(), query: student?.name ?? "" };
+    }
+  }
   activeView = view;
   recordEditTarget = null;
   if (options.studentId) {
     if (profileStudentId !== options.studentId) resetProfileConcernFilters();
     profileStudentId = options.studentId;
+    studentQuery = getStudent(options.studentId)?.name ?? "";
+    houseFilter = studentGradeFilter = "";
   }
   window.location.hash = view;
   render();
@@ -537,6 +552,7 @@ function getAvailableGrades() {
 }
 
 function getStudentFilters(context) {
+  if (context === "ranking") return rankingFilters;
   if (context === "students") {
     return { query: studentQuery, house: houseFilter, grade: studentGradeFilter };
   }
@@ -546,13 +562,19 @@ function getStudentFilters(context) {
   return concernStudentFilters[context];
 }
 
-function getStudentsMatchingFilters({ query, house, grade }) {
-  const name = query.trim().toLowerCase();
-  return state.students.filter((student) =>
-    student.name.toLowerCase().includes(name) &&
-    (house === "all" || student.houseId === house) &&
-    (grade === "all" || String(student.grade) === grade)
-  );
+function getStudentsMatchingFilters(filters) {
+  return matchingStudents(state.students, filters);
+}
+
+function resetRosterFilters(context) {
+  if (context === "students") { studentQuery = houseFilter = studentGradeFilter = ""; profileStudentId = null; }
+  else if (context === "send") { sendStudentQuery = sendHouseFilter = sendGradeFilter = ""; }
+  else if (concernStudentFilters[context]) concernStudentFilters[context] = emptyStudentFilters();
+  else if (context === "dashboard") { rankingFilters = emptyStudentFilters(); rankingValueFilter = ""; rankingDateFrom = rankingDateTo = ""; rankingExpanded = false; calendarTeacherGrade = ""; selectedCalendarEventId = null; }
+}
+
+function renderCrestVisual(student, points = getStudentTotal(state, student.id)) {
+  return studentCrestVisual(student, getHouse(student.houseId), points, `crest-${++crestInstance}`, escapeHtml);
 }
 
 function renderStudentFilters(context) {
@@ -563,7 +585,7 @@ function renderStudentFilters(context) {
       <label class="search-field" for="${searchId}">
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m20 19-4.4-4.4a7 7 0 1 0-1.4 1.4l4.4 4.4L20 19ZM5 10.5a5.5 5.5 0 1 1 11 0 5.5 5.5 0 0 1-11 0Z" /></svg>
         <span class="sr-only">Search students</span>
-        <input id="${searchId}" data-student-search="${context}" type="search" placeholder="Search by name" value="${escapeHtml(filters.query)}" autocomplete="off" />
+        <input id="${searchId}" data-student-search="${context}" type="search" placeholder="Search name" value="${escapeHtml(filters.query)}" autocomplete="off" />
       </label>
       <div class="house-filters" role="group" aria-label="Filter by house">
         ${[{ id: "all", name: "All houses" }, ...HOUSES].map((house) => `
@@ -583,7 +605,8 @@ function renderStudentFilters(context) {
 
 function updateStudentFilters(context, changes) {
   const filters = { ...getStudentFilters(context), ...changes };
-  if (context === "students") {
+  if (context === "ranking") rankingFilters = filters;
+  else if (context === "students") {
     studentQuery = filters.query;
     houseFilter = filters.house;
     studentGradeFilter = filters.grade;
@@ -606,7 +629,8 @@ function updateStudentFilters(context, changes) {
     button.setAttribute("aria-pressed", String(selected));
   });
 
-  if (context === "students") refreshStudentBrowser();
+  if (context === "ranking") refreshStudentRanking();
+  else if (context === "students") refreshStudentBrowser();
   else if (context === "send") {
     const students = getFilteredSendStudents();
     document.querySelector("#send-student-count").textContent = `${formatStudentCount(students.length)} available · ${sendStudentIds.length} selected`;
@@ -615,10 +639,11 @@ function updateStudentFilters(context, changes) {
 }
 
 function renderStudentFilterEmptyState(context, hidden = false) {
+  const active = hasStudentFilter(getStudentFilters(context));
   return `
     <div class="no-filter-results" data-student-filter-empty="${context}" ${hidden ? "hidden" : ""}>
-      <p>No students match this name, house, and grade combination.</p>
-      <button type="button" data-action="reset-student-filters" data-filter-context="${context}">Clear filters</button>
+      <p>${active ? "No students match these filters." : "Search by name or choose a house or grade."}</p>
+      ${active ? `<button type="button" data-action="reset-student-filters" data-filter-context="${context}">Clear filters</button>` : ""}
     </div>
   `;
 }
@@ -738,6 +763,7 @@ function getAccountRoleLabel() {
 }
 
 function getVisibleCalendarEvents(startDate = "2026-08-01", endDate = "2027-06-01") {
+  if (activeUser?.type === "teacher" && !calendarTeacherGrade) return [];
   return getCalendarEvents(state, {
     user: activeUser,
     startDate,
@@ -1007,19 +1033,19 @@ function renderSchoolCalendar() {
         </div>
         ${canOpenCalendarEventCreator() ? '<button class="calendar-create-trigger" type="button" data-action="open-calendar-create"><span aria-hidden="true">＋</span>Create event</button>' : ""}
         <div class="calendar-toolbar">
-          ${activeUser.type === "teacher" ? `<label><span class="sr-only">Calendar grade</span><select id="calendar-grade-filter"><option value="all">All grades</option>${[6, 7, 8, 9, 10, 11, 12].map((grade) => `<option value="${grade}" ${calendarTeacherGrade === String(grade) ? "selected" : ""}>Grade ${grade}</option>`).join("")}</select></label>` : ""}
+          ${activeUser.type === "teacher" ? `<label><span class="sr-only">Calendar grade</span><select id="calendar-grade-filter"><option value="">Choose grade</option><option value="all" ${calendarTeacherGrade === "all" ? "selected" : ""}>All grades</option>${[6, 7, 8, 9, 10, 11, 12].map((grade) => `<option value="${grade}" ${calendarTeacherGrade === String(grade) ? "selected" : ""}>Grade ${grade}</option>`).join("")}</select></label>` : ""}
           <div class="calendar-week-controls"><button type="button" data-action="calendar-prev" aria-label="Previous week">‹</button><button type="button" data-action="calendar-today">Today</button><button type="button" data-action="calendar-next" aria-label="Next week">›</button></div>
         </div>
       </div>
       <div class="calendar-week-label">${weekLabel}</div>
-      <div class="calendar-week-grid">
+      ${activeUser.type === "teacher" && !calendarTeacherGrade ? '<p class="calendar-filter-prompt">Choose a grade to view events, or select All grades.</p>' : `<div class="calendar-week-grid">
         ${days.map((date) => {
           const dateEvents = events.filter((event) => event.date === date);
           const dateObject = new Date(`${date}T12:00:00`);
           const isToday = date === getTodayInputValue();
           return `<article class="calendar-day ${isToday ? "is-today" : ""}"><header><span>${new Intl.DateTimeFormat("en", { weekday: "short" }).format(dateObject)}</span><strong>${dateObject.getDate()}</strong></header><div class="calendar-day-events">${dateEvents.map(renderCalendarEvent).join("") || '<span class="calendar-empty">No scheduled event</span>'}</div></article>`;
         }).join("")}
-      </div>
+      </div>`}
       ${renderCalendarEventPanel(events)}
     </section>
     ${renderCalendarEventCreateModal()}
@@ -1144,85 +1170,50 @@ function renderHouseLeaders(house) {
   `;
 }
 
-function renderStudentRanking() {
-  const ranking = getStudentRanking(state, {
-    valueId: rankingValueFilter,
-    grade: rankingGradeFilter,
+function getRankedStudents() {
+  const ranked = getStudentRanking(state, {
+    valueId: rankingValueFilter || "all",
+    grade: rankingFilters.grade || "all",
     dateFrom: rankingDateFrom,
     dateTo: rankingDateTo
   });
-  const visibleStudents = rankingExpanded ? ranking : ranking.slice(0, 20);
+  return matchingStudents(ranked, rankingFilters, {
+    activated: Boolean(rankingValueFilter || rankingDateFrom || rankingDateTo)
+  });
+}
 
+function renderRankingResults() {
+  const ranking = getRankedStudents();
+  const visible = rankingExpanded ? ranking : ranking.slice(0, 20);
+  return visible.length ? `<ol class="ranking-crest-grid">${visible.map((student, index) => `
+    <li><span class="ranking-position" aria-label="Rank ${index + 1}">${index + 1}</span>
+      <div class="student-crest-item"><button class="student-crest" type="button" data-action="open-student" data-student-id="${student.id}" aria-label="Rank ${index + 1}: ${escapeHtml(student.name)}, Grade ${student.grade}, ${student.points} points, ${student.recognitions} coins">
+        ${renderCrestVisual(student, student.points)}
+      </button>${renderIepHeart(state, activeUser, student, escapeHtml)}</div>
+      <small>${student.recognitions} ${student.recognitions === 1 ? "coin" : "coins"}</small>
+    </li>`).join("")}</ol>` : renderStudentFilterEmptyState("ranking");
+}
+
+function refreshStudentRanking() {
+  const results = document.querySelector("#ranking-results");
+  if (results) results.innerHTML = renderRankingResults();
+}
+
+function renderStudentRanking() {
   return `
     <section class="panel student-ranking-panel" aria-labelledby="student-ranking-title">
       <div class="panel-heading ranking-heading">
-        <div>
-          <h2 id="student-ranking-title">Student coin ranking</h2>
-          <p>${rankingExpanded ? "Full student roster" : "Top 20 students"}</p>
-        </div>
-        <button class="text-button" type="button" data-action="toggle-ranking-roster">
-          ${rankingExpanded ? "Show top 20" : "View full roster"}
-        </button>
+        <h2 id="student-ranking-title">Student coin ranking</h2>
+        <button class="text-button" type="button" data-action="toggle-ranking-roster">${rankingExpanded ? "Show top 20" : "View full roster"}</button>
       </div>
-
-      <div class="ranking-filters" aria-label="Ranking filters">
-        <label>
-          HCAS 7C
-          <select id="ranking-value-filter">
-            <option value="all" ${rankingValueFilter === "all" ? "selected" : ""}>All 7Cs</option>
-            ${VALUES.map(
-              (value) =>
-                `<option value="${value.id}" ${rankingValueFilter === value.id ? "selected" : ""}>${value.name}</option>`
-            ).join("")}
-          </select>
-        </label>
-        <label>
-          Grade
-          <select id="ranking-grade-filter">
-            <option value="all" ${rankingGradeFilter === "all" ? "selected" : ""}>All grades</option>
-            ${getAvailableGrades()
-              .map(
-                (grade) =>
-                  `<option value="${grade}" ${rankingGradeFilter === String(grade) ? "selected" : ""}>Grade ${grade}</option>`
-              )
-              .join("")}
-          </select>
-        </label>
-        <label>
-          Coin publication range
-          <span class="date-filter-control">
-            <span><small>From</small><input id="ranking-date-from" type="date" value="${rankingDateFrom}" max="${rankingDateTo}" /></span>
-            <span><small>To</small><input id="ranking-date-to" type="date" value="${rankingDateTo}" min="${rankingDateFrom}" /></span>
-            ${rankingDateFrom || rankingDateTo ? '<button type="button" data-action="clear-ranking-date">All dates</button>' : ""}
-          </span>
-        </label>
+      ${renderStudentFilters("ranking")}
+      <div class="ranking-filters" aria-label="Ranking recognition filters">
+        <label>7C<select id="ranking-value-filter"><option value="">Choose a 7C</option><option value="all" ${rankingValueFilter === "all" ? "selected" : ""}>All 7Cs</option>${VALUES.map(value => `<option value="${value.id}" ${rankingValueFilter === value.id ? "selected" : ""}>${value.name}</option>`).join("")}</select></label>
+        <label>From<input id="ranking-date-from" type="date" value="${rankingDateFrom}" max="${rankingDateTo}" /></label>
+        <label>To<input id="ranking-date-to" type="date" value="${rankingDateTo}" min="${rankingDateFrom}" /></label>
+        ${rankingDateFrom || rankingDateTo ? '<button type="button" class="text-button" data-action="clear-ranking-date">All dates</button>' : ""}
       </div>
-
-      <div class="responsive-table ranking-table-wrap">
-        <table class="ranking-table">
-          <thead><tr><th scope="col">Rank</th><th scope="col">Student</th><th scope="col">Grade</th><th scope="col">Coins</th><th scope="col">Points</th></tr></thead>
-          <tbody>
-            ${visibleStudents
-              .map(
-                (student, index) => `
-                  <tr>
-                    <td class="ranking-position">${index + 1}</td>
-                    <td>${renderStudentIdentity(student, {
-                      secondary: getHouse(student.houseId).name,
-                      points: student.points.toLocaleString(),
-                      action: true,
-                      className: "is-compact"
-                    })}</td>
-                    <td>Grade ${student.grade}</td>
-                    <td>${student.recognitions}</td>
-                    <td><strong>${student.points.toLocaleString()}</strong></td>
-                  </tr>
-                `
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
+      <div id="ranking-results" class="ranking-results">${renderRankingResults()}</div>
     </section>
   `;
 }
@@ -1236,7 +1227,7 @@ function renderDashboard() {
     const labs = (state.leadershipAssignments?.labs ?? []).filter((lab) => lab.leaderIds.includes(activeStudent.id));
     return `
       <div class="page student-dashboard">
-        ${renderPageHeader(`Welcome, ${escapeHtml(activeStudent.name)}`, `Grade ${activeStudent.grade}`)}
+        ${renderPageHeader("Dashboard", `${escapeHtml(activeStudent.name)} · Grade ${activeStudent.grade}`)}
         <section class="student-calendar-identity panel" style="--house-color:${house.color}">
           <img src="${house.image}" alt="${house.name} logo" />
           <div><span>Your house</span><h2>${house.name}</h2><p>${totals[house.id].toLocaleString()} house points</p></div>
@@ -1251,13 +1242,10 @@ function renderDashboard() {
   }
   const rankedHouses = [...HOUSES].sort((a, b) => totals[b.id] - totals[a.id]);
   const maxPoints = Math.max(...Object.values(totals), 1);
-  const recentAwards = [...state.awards]
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-    .slice(0, 6);
 
   return `
     <div class="page">
-      ${renderPageHeader("House dashboard", "")}
+      ${renderPageHeader("Dashboard", "")}
       ${cloudEnabled ? renderSupportNotifications(state, activeUser, escapeHtml) : ""}
 
       ${renderSchoolCalendar()}
@@ -1317,62 +1305,18 @@ function renderDashboard() {
           </ol>
         </section>
 
-        <section class="panel activity-panel" aria-labelledby="recent-title">
-          <div class="panel-heading">
-            <div>
-              <h2 id="recent-title">Recent activity</h2>
-              <p>Latest recognitions</p>
-            </div>
-          </div>
-          <ul class="activity-list">
-            ${recentAwards
-              .map((award) => {
-                const student = getStudent(award.studentId);
-                const value = getValue(award.valueId);
-                const teacher = getTeacher(award.teacherId);
-                return `
-                  <li>
-                    ${renderStudentIdentity(student, {
-                      secondary: `${value.name} · ${teacher.name}`,
-                      points: formatSignedPoints(award.points),
-                      action: true,
-                      className: "is-compact"
-                    })}
-                    <time datetime="${award.createdAt}" title="Published ${formatDateTime(award.createdAt)}">Published ${formatRelativeTime(award.createdAt)}</time>
-                  </li>
-                `;
-              })
-              .join("")}
-          </ul>
-        </section>
-
         ${renderStudentRanking()}
       </div>
+      ${renderTeacherActivity()}
     </div>
   `;
 }
 
 function renderSendStudentOption(student) {
-  const house = getHouse(student.houseId);
-  const totalPoints = getStudentTotal(state, student.id);
-  const isSelected = sendStudentIds.includes(student.id);
-
-  return `
-    <button
-      class="send-student-option ${isSelected ? "is-selected" : ""}"
-      type="button"
-      data-action="toggle-send-student"
-      data-student-id="${student.id}"
-      aria-pressed="${isSelected}"
-    >
-      <img src="${house.image}" alt="" />
-      <span>
-        <strong>${student.name}</strong>
-        <small>Grade ${student.grade} · ${house.name}</small>
-      </span>
-      <b class="points-notification" aria-label="${totalPoints} total points">${totalPoints}</b>
-    </button>
-  `;
+  const selected = sendStudentIds.includes(student.id);
+  return `<div class="student-crest-item"><button class="student-crest send-student-option ${selected ? "is-selected" : ""}" type="button" data-action="toggle-send-student" data-student-id="${student.id}" aria-pressed="${selected}" aria-label="${escapeHtml(student.name)}, Grade ${student.grade}, ${getHouse(student.houseId).name}, ${getStudentTotal(state, student.id)} points">
+    ${renderCrestVisual(student)}
+  </button>${renderIepHeart(state, activeUser, student, escapeHtml)}</div>`;
 }
 
 function renderSendSummary(student, selectedValue, canSend) {
@@ -1383,12 +1327,7 @@ function renderSendSummary(student, selectedValue, canSend) {
   return `
     <article class="send-summary" style="--house-color: ${house.color}">
       <div class="summary-house">
-        <img src="${house.image}" alt="${house.name} emblem" />
-        <div>
-          <h2>${student.name}</h2>
-          <p>Grade ${student.grade} · ${house.name}</p>
-        </div>
-        <b class="points-notification" aria-label="${studentTotal} total points">${studentTotal}</b>
+        <div class="send-summary-student" role="img" aria-label="${escapeHtml(student.name)}, Grade ${student.grade}, ${house.name}, ${studentTotal} points">${renderCrestVisual(student, studentTotal)}</div>
         <button
           class="remove-student-button"
           type="button"
@@ -1786,19 +1725,12 @@ function renderConcernStudentSelector() {
         <span data-concern-student-count role="status">${formatStudentCount(visibleIds.size)} available · ${concernStudentPreset ? 1 : 0} selected</span>
       </div>
       <div class="concern-student-grid" role="group" aria-label="Students involved">
-        ${state.students.map((student) => {
-          const house = getHouse(student.houseId);
-          return `
-            <label class="concern-student-option" data-concern-student-id="${student.id}" ${visibleIds.has(student.id) ? "" : "hidden"}>
-              <input type="checkbox" name="studentIds" value="${student.id}" ${concernStudentPreset === student.id ? "checked" : ""} />
-              <span>
-                <img src="${house.image}" alt="" />
-                <span><strong>${escapeHtml(student.name)}</strong><small>Grade ${student.grade} · ${house.name}</small></span>
-                <b class="points-notification">${getStudentTotal(state, student.id)}</b>
-              </span>
-            </label>
-          `;
-        }).join("")}
+        ${state.students.map(student => `<div class="student-crest-item concern-crest-item" data-concern-student-id="${student.id}" ${visibleIds.has(student.id) ? "" : "hidden"}>
+          <label class="concern-student-option">
+            <input type="checkbox" name="studentIds" value="${student.id}" ${concernStudentPreset === student.id ? "checked" : ""} aria-label="${escapeHtml(student.name)}, Grade ${student.grade}, ${getHouse(student.houseId).name}, ${getStudentTotal(state, student.id)} points" />
+            <span class="student-crest">${renderCrestVisual(student)}</span>
+          </label>${renderIepHeart(state, activeUser, student, escapeHtml)}
+        </div>`).join("")}
       </div>
       ${renderStudentFilterEmptyState(context, visibleIds.size > 0)}
     </div>
@@ -1816,7 +1748,7 @@ function refreshConcernStudentSelector() {
   });
   const selectedCount = selector.querySelectorAll('[name="studentIds"]:checked').length;
   selector.querySelector("[data-concern-student-count]").textContent = `${formatStudentCount(visibleIds.size)} available · ${selectedCount} selected`;
-  selector.querySelector("[data-student-filter-empty]").hidden = visibleIds.size > 0;
+  selector.querySelector("[data-student-filter-empty]").outerHTML = renderStudentFilterEmptyState(activeView, visibleIds.size > 0);
 }
 
 function renderBehaviorIssueOptions(level) {
@@ -2194,49 +2126,12 @@ function renderStudentGallery() {
   const students = getFilteredStudents();
 
   if (!students.length) {
-    return `
-      <div class="empty-state">
-        <strong>No students found</strong>
-        <p>Try another name, house, or grade.</p>
-      </div>
-    `;
+    return renderStudentFilterEmptyState("students");
   }
 
-  return students
-    .map((student) => {
-      const house = getHouse(student.houseId);
-      const totalPoints = getStudentTotal(state, student.id);
-      const namePathId = `${student.id}-name-curve`;
-      const gradePathId = `${student.id}-grade-curve`;
-      return `
-        <div class="student-crest-item"><button
-          class="student-crest ${student.id === profileStudentId ? "is-selected" : ""}"
-          type="button"
-          data-action="select-student"
-          data-student-id="${student.id}"
-          aria-pressed="${student.id === profileStudentId}"
-          aria-label="${student.name}, Grade ${student.grade}, ${house.name}, ${totalPoints} points"
-        >
-          <span class="student-crest-visual" aria-hidden="true">
-            <svg viewBox="0 0 220 220">
-              <defs>
-                <path id="${namePathId}" d="M 24 73 Q 110 1 196 73" />
-                <path id="${gradePathId}" d="M 36 174 Q 110 224 184 174" />
-              </defs>
-              <image href="${house.image}" x="38" y="39" width="144" height="144" preserveAspectRatio="xMidYMid meet" />
-              <text class="student-crest-name">
-                <textPath href="#${namePathId}" startOffset="50%" text-anchor="middle">${student.name}</textPath>
-              </text>
-              <text class="student-crest-grade">
-                <textPath href="#${gradePathId}" startOffset="50%" text-anchor="middle">GRADE ${student.grade}</textPath>
-              </text>
-            </svg>
-            <b class="student-points-badge">${totalPoints}</b>
-          </span>
-        </button>${renderIepHeart(state, activeUser, student, escapeHtml)}</div>
-      `;
-    })
-    .join("");
+  return students.map(student => `<div class="student-crest-item"><button class="student-crest ${student.id === profileStudentId ? "is-selected" : ""}" type="button" data-action="select-student" data-student-id="${student.id}" aria-pressed="${student.id === profileStudentId}" aria-label="${escapeHtml(student.name)}, Grade ${student.grade}, ${getHouse(student.houseId).name}, ${getStudentTotal(state, student.id)} points">
+    ${renderCrestVisual(student)}
+  </button>${renderIepHeart(state, activeUser, student, escapeHtml)}</div>`).join("");
 }
 
 function renderStudentDetailRegion() {
@@ -2291,12 +2186,19 @@ function renderStudentValueHistory(student, value) {
   `;
 }
 
+function renderProfileRecordAction(student, type) {
+  if (activeUser?.type !== "teacher") return "";
+  const labels = { coin: "Send coin", behavior: "Behavior concern", academic: "Academic concern", sel: "SEL concern" };
+  return `<button type="button" class="text-button profile-record-action" data-action="${type === "coin" ? "send-to-student" : `${type}-for-student`}" data-student-id="${student.id}">+ ${labels[type]}</button>`;
+}
+
 function renderStudentCoinTable(student) {
   const awards = getStudentAwards(state, student.id);
   return `
     <section class="profile-record-section" aria-labelledby="${student.id}-coin-history">
       <div class="record-section-heading">
         <div><h3 id="${student.id}-coin-history">Coins received</h3><span>${awards.length} published recognitions</span></div>
+        ${renderProfileRecordAction(student, "coin")}
       </div>
       <div class="responsive-table">
         <table class="record-table">
@@ -2341,6 +2243,7 @@ function renderBehaviorConcernsTable(student) {
         <div><h3 id="${student.id}-behavior-history">Behavior concerns</h3><span>${countLabel}</span></div>
         <div class="record-heading-tools">
           ${renderProfileConcernFilter("behavior", allConcerns, "behavior issues")}
+          ${renderProfileRecordAction(student, "behavior")}
           <span class="privacy-badge">Teacher details</span>
         </div>
       </div>
@@ -2410,6 +2313,7 @@ function renderAcademicConcernsTable(student) {
         <div><h3 id="${student.id}-academic-history">Academic concerns</h3><span>${countLabel}</span></div>
         <div class="record-heading-tools">
           ${renderProfileConcernFilter("academic", allConcerns, "academic concerns")}
+          ${renderProfileRecordAction(student, "academic")}
           <span class="privacy-badge is-private">Teachers only</span>
         </div>
       </div>
@@ -2473,6 +2377,7 @@ function renderSelConcernsTable(student) {
         <div><h3 id="${student.id}-sel-history">SEL concerns</h3><span>${countLabel}</span></div>
         <div class="record-heading-tools">
           ${renderProfileConcernFilter("sel", allConcerns, "SEL concerns")}
+          ${renderProfileRecordAction(student, "sel")}
           <span class="privacy-badge is-private">Teachers only</span>
         </div>
       </div>
@@ -2594,12 +2499,7 @@ function renderStudentDetail() {
     ${renderSelConcernsTable(student)}
     ${renderSelCheckInsTable(student)}
 
-    <div class="profile-actions">
-      <button class="secondary-button profile-send" type="button" data-action="send-to-student" data-student-id="${student.id}">Send coin</button>
-      <button class="secondary-button" type="button" data-action="behavior-for-student" data-student-id="${student.id}">Behavior concern</button>
-      <button class="secondary-button" type="button" data-action="academic-for-student" data-student-id="${student.id}">Academic concern</button>
-      <button class="secondary-button" type="button" data-action="sel-for-student" data-student-id="${student.id}">SEL concern</button>
-    </div>
+
   `;
 }
 
@@ -2647,9 +2547,8 @@ function renderTeacherActivity() {
   const maxRecognitions = Math.max(...Object.values(stats).map((stat) => stat.recognitions), 1);
 
   return `
-    <div class="page">
-      ${renderPageHeader("My activity", "")}
-
+    <section class="teacher-activity-section" aria-labelledby="teacher-activity-title">
+      <h2 id="teacher-activity-title">My activity</h2>
       <div class="teacher-activity-layout">
         <section class="panel teacher-breakdown-panel" aria-labelledby="teacher-breakdown-title">
           <div class="panel-heading">
@@ -2736,7 +2635,7 @@ function renderTeacherActivity() {
           `}
         </section>
       </div>
-    </div>
+    </section>
   `;
 }
 
@@ -2881,7 +2780,6 @@ function render() {
   else if (activeView === "sel-concern") viewRoot.innerHTML = renderSelConcern();
   else if (activeView === "students") viewRoot.innerHTML = renderStudents();
   else if (activeView === "administration") viewRoot.innerHTML = renderAdministration();
-  else if (activeView === "activity") viewRoot.innerHTML = renderTeacherActivity();
   else viewRoot.innerHTML = renderDashboard();
 
   viewRoot.insertAdjacentHTML("beforeend", renderRecordEditModal());
@@ -3031,6 +2929,7 @@ document.addEventListener("click", async (event) => {
       break;
     case "toggle-ranking-roster":
       rankingExpanded = !rankingExpanded;
+      if (rankingExpanded && !hasStudentFilter(rankingFilters) && !rankingValueFilter && !rankingDateFrom && !rankingDateTo) rankingFilters.house = "all";
       render();
       break;
     case "clear-ranking-date":
@@ -3131,7 +3030,7 @@ document.addEventListener("click", async (event) => {
     }
     case "reset-student-filters": {
       const context = actionTarget.dataset.filterContext;
-      updateStudentFilters(context, { query: "", house: "all", grade: "all" });
+      updateStudentFilters(context, emptyStudentFilters());
       viewRoot.querySelector(`[data-student-search="${context}"]`)?.focus();
       break;
     }
@@ -3143,9 +3042,6 @@ document.addEventListener("click", async (event) => {
       }
       profileStudentId = actionTarget.dataset.studentId;
       if (activeView !== "students") {
-        studentQuery = "";
-        houseFilter = "all";
-        studentGradeFilter = "all";
         setView("students", { studentId: profileStudentId });
       } else {
         refreshStudentBrowser();
@@ -3188,6 +3084,8 @@ document.addEventListener("click", async (event) => {
       const changes = actionTarget.dataset.action === "filter-house"
         ? { house: actionTarget.dataset.houseId }
         : { grade: actionTarget.dataset.grade };
+      const key = "house" in changes ? "house" : "grade";
+      if (getStudentFilters(context)[key] === changes[key]) changes[key] = "";
       updateStudentFilters(context, changes);
       break;
     }
@@ -3221,28 +3119,22 @@ document.addEventListener("click", async (event) => {
     case "send-to-student":
       resetSendSelection();
       sendStudentIds = [actionTarget.dataset.studentId];
-      sendStudentQuery = "";
-      sendGradeFilter = "all";
-      sendHouseFilter = "all";
-      setView("send");
+      setView("send", { presetStudentId: actionTarget.dataset.studentId });
       break;
     case "behavior-for-student":
-      concernStudentFilters["behavior-concern"] = { query: "", house: "all", grade: "all" };
       concernStudentPreset = actionTarget.dataset.studentId;
       lastConcernConfirmation = null;
-      setView("behavior-concern");
+      setView("behavior-concern", { presetStudentId: actionTarget.dataset.studentId });
       break;
     case "academic-for-student":
-      concernStudentFilters["academic-concern"] = { query: "", house: "all", grade: "all" };
       concernStudentPreset = actionTarget.dataset.studentId;
       lastConcernConfirmation = null;
-      setView("academic-concern");
+      setView("academic-concern", { presetStudentId: actionTarget.dataset.studentId });
       break;
     case "sel-for-student":
-      concernStudentFilters["sel-concern"] = { query: "", house: "all", grade: "all" };
       concernStudentPreset = actionTarget.dataset.studentId;
       lastConcernConfirmation = null;
-      setView("sel-concern");
+      setView("sel-concern", { presetStudentId: actionTarget.dataset.studentId });
       break;
   }
   } catch (error) { showToast(error.message); render(); }
@@ -3271,9 +3163,7 @@ viewRoot.addEventListener("change", (event) => {
   } else if (event.target.matches("#ranking-value-filter")) {
     rankingValueFilter = event.target.value;
     render();
-  } else if (event.target.matches("#ranking-grade-filter")) {
-    rankingGradeFilter = event.target.value;
-    render();
+
   } else if (event.target.matches("#ranking-date-from")) {
     rankingDateFrom = event.target.value;
     if (rankingDateTo && rankingDateFrom > rankingDateTo) rankingDateTo = rankingDateFrom;

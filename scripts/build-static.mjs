@@ -7,6 +7,7 @@ const outputDirectory = resolve(projectRoot, "dist");
 const publicEntries = [
   "index.html",
   "app.js",
+  "student-ui.js",
   "calendar-data.js",
   "concerns-data.js",
   "data.js",
