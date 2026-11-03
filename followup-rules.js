@@ -7,6 +7,7 @@ export const RESPONSE_LABELS = {
 };
 export const taiwanToday = (value = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
 export const dateValue = validDate;
+export const studentResponseTarget = (concernId, studentId) => `student-response-${concernId}-${studentId}`;
 function reflectionText(value, label = "reflection") {
   const text = String(value ?? "").trim();
   if (!text || text.length > 12000) throw new Error(`Write a ${label} of up to 12,000 characters`);
@@ -68,9 +69,13 @@ export function applyFollowupCommand(state, actor, action, p, now) {
     if (!concern || actor.type !== "student" || !concern.studentIds.includes(actor.id)) throw new Error("You can respond only to your own behavior notices");
     const text = reflectionText(p.text, "response");
     const previous = (concern.studentResponses ?? []).find(r => r.studentId === actor.id);
+    if (previous?.text === text) return state;
     const response = { studentId: actor.id, text, submittedAt: previous?.submittedAt ?? now, updatedAt: now };
     const updated = { ...concern, studentResponses: [...(concern.studentResponses ?? []).filter(r => r.studentId !== actor.id), response] };
-    return { ...state, behaviorConcerns: state.behaviorConcerns.map(c => c.id === concern.id ? updated : c) };
+    const id = crypto.randomUUID();
+    const recipientIds = [...new Set([concern.teacherId, ...supervisors(state)])].filter(id => state.teachers.some(t => t.id === id));
+    const notice = { id, key: `behavior-student-response:${id}`, kind: "behavior-student-response", concernType: "behavior", concernId: concern.id, studentId: actor.id, recipientIds, createdAt: now, readBy: {} };
+    return { ...state, behaviorConcerns: state.behaviorConcerns.map(c => c.id === concern.id ? updated : c), notifications: [...(state.notifications ?? []), notice] };
   }
   if (action === "concern-response") {
     const concern = state[`${p.type}Concerns`]?.find(c => c.id === p.id);

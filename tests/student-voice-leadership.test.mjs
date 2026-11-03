@@ -98,3 +98,34 @@ test('only responsible staff assign tasks to their own leaders, with private rec
  assert.deepEqual(leadershipScopes(s,actorForAccount(s,'random3')),[]);
  s=command(s,'random1','notification-read',{key:s.notifications.at(-1).key}); assert.ok(s.notifications.at(-1).readBy.random1);
 });
+
+test('student replies notify the publishing teacher and all supervisors once per changed response, targeting the exact student response',()=>{
+ let s=fixture();
+ s.teachers.push({id:'supervisor',name:'Supervising Teacher',role:'teacher-supervising'},{id:'regular',name:'Other Teacher',role:'teacher'});
+ s=command(s,'random1','behavior-student-response',{id:'behavior-a',text:'My response'});
+ const notice=s.notifications.at(-1);
+ assert.equal(notice.kind,'behavior-student-response');
+ assert.deepEqual(notice.recipientIds.sort(),['david','francois','supervisor']);
+ const html=renderFollowupNotifications(visibleState(s,actorForAccount(s,'david')),actorForAccount(s,'david'),String);
+ assert.match(html,/Student replied to a behavior concern/);
+ assert.match(html,/data-record-id="student-response-behavior-a-random1"/);
+ assert.match(behaviorStudentResponse(s,actorForAccount(s,'david'),s.behaviorConcerns[0],'random1',String),/id="student-response-behavior-a-random1"/);
+ for(const id of ['regular','random1','random2']) assert.equal(visibleState(s,actorForAccount(s,id)).notifications.some(n=>n.key===notice.key),false);
+ s=command(s,'david','notification-read',{key:notice.key});
+ assert.ok(s.notifications.at(-1).readBy.david);
+ assert.equal(s.notifications.at(-1).readBy.supervisor,undefined);
+ const count=s.notifications.length;
+ s=command(s,'random1','behavior-student-response',{id:'behavior-a',text:'My response'});
+ assert.equal(s.notifications.length,count);
+ s=command(s,'random1','behavior-student-response',{id:'behavior-a',text:'My updated response'});
+ assert.equal(s.notifications.length,count+1);
+ assert.notEqual(s.notifications.at(-1).key,notice.key);
+ s=synchronizeAlerts(s,'2026-11-03');
+ const synchronizedCount=s.notifications.length;
+ assert.equal(synchronizeAlerts(s,'2026-11-03').notifications.length,synchronizedCount);
+ s.behaviorConcerns[0].teacherId='francois';
+ s=command(s,'random2','behavior-student-response',{id:'behavior-a',text:'My own view'});
+ assert.deepEqual(s.notifications.at(-1).recipientIds.sort(),['francois','supervisor']);
+ const peerHtml=renderFollowupNotifications(visibleState(s,actorForAccount(s,'supervisor')),actorForAccount(s,'supervisor'),String);
+ assert.match(peerHtml,/data-record-id="student-response-behavior-a-random2"/);
+});

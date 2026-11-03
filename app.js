@@ -62,7 +62,7 @@ import { leadershipScopes } from "./leadership.js";
 import { renderLeadershipWorkspace, renderEventActivities } from "./leadership-ui.js";
 import { SMART_FIELDS, isSupervisor } from "./support-rules.js";
 import { renderIepHeart, renderSupportProfile, renderSupportDocuments, renderTrustedAdults } from "./support-ui.js";
-import { renderFollowupNotifications as renderSupportNotifications, responseHistory, checkInRow, behaviorStudentResponse } from "./followup-ui.js";
+import { renderFollowupNotifications as renderSupportNotifications, responseHistory, checkInRow, behaviorStudentResponse, notificationRecordTarget } from "./followup-ui.js";
 import { academicStrategies, behavioralStrategies, selOptions } from "./tier-rules.js";
 import { enablePhonePush, disablePhonePush, initializePhonePush } from "./push-client.js";
 import { renderLevelUpAttachments, canReadLevelUpDocument } from "./levelup-resources.js";
@@ -3453,7 +3453,7 @@ initializePhonePush(() => activeUser, noticeId => {
   const n = state.notifications?.find(item => item.id === noticeId);
   if (n && activeUser && !mustChangePassword) {
     if (["event-activity", "leader-task"].includes(n.kind)) openLeadershipNotice(n);
-    else openSupportRecord(n.studentId, n.goalId ? `${n.kind.includes("reflection") || n.kind === "goal-final-review" ? "reflection" : "goal"}-${n.goalId}` : n.awardId ? `award-${n.awardId}` : n.concernId || n.concernIds?.length ? `concern-${n.concernId ?? n.concernIds.at(-1)}` : "");
+    else openSupportRecord(n.studentId, notificationRecordTarget(n));
   }
 });
 
