@@ -9,6 +9,9 @@
   "background_color": "#ffffff",
   "theme_color": "#214f77",
   "orientation": "any",
+  "lang": "en",
+  "categories": ["education", "productivity"],
+  "prefer_related_applications": false,
   "icons": [
     {
       "src": "assets/icons/icon-192.png",

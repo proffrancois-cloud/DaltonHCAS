@@ -47,7 +47,7 @@ function decodeBasicCredentials(header) {
 
 export default function proxy(request) {
   // Generic installation assets must be reachable by the phone's background worker.
-  if (["/service-worker.js", "/manifest.webmanifest", "/assets/icons/icon-192.png", "/assets/icons/icon-512.png", "/assets/icons/apple-touch-icon.png"].includes(new URL(request.url).pathname)) return new Response(null, { headers: { "x-middleware-next": "1", "Cache-Control": "no-cache" } });
+  if (["/service-worker.js", "/manifest.webmanifest", "/app-version.json", "/assets/icons/icon-192.png", "/assets/icons/icon-512.png", "/assets/icons/apple-touch-icon.png"].includes(new URL(request.url).pathname)) return new Response(null, { headers: { "x-middleware-next": "1", "Cache-Control": "no-cache" } });
   const expectedUsername = process.env.PREVIEW_USERNAME;
   const expectedPassword = process.env.PREVIEW_PASSWORD;
   if (!expectedUsername || !expectedPassword) return serviceUnavailable();

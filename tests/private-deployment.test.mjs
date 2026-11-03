@@ -56,3 +56,13 @@ test("private roster endpoint reads only the compressed server secret", () => {
   assert.equal(response.getHeader("cache-control"), "no-store, private, max-age=0");
   assert.deepEqual(JSON.parse(response.body), roster);
 });
+
+test("only generic PWA resources bypass the preview password; school source and records stay protected", () => {
+  for (const path of ["/manifest.webmanifest", "/service-worker.js", "/app-version.json", "/assets/icons/icon-192.png"]) {
+    const result = previewProxy(new Request(`https://example.vercel.app${path}`));
+    assert.equal(result.headers.get("x-middleware-next"), "1");
+  }
+  for (const path of ["/", "/app.js", "/install-client.js", "/api/roster", "/private/roster.json"]) {
+    assert.equal(previewProxy(new Request(`https://example.vercel.app${path}`)).status, 401);
+  }
+});

@@ -4,12 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#214f77" />
+    <meta name="app-build" content="development" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="DaltonHCAS" />
     <meta
       name="description"
-      content="A local HCAS app for awarding points through the school 7Cs and tracking house totals."
+      content="DaltonHCAS: house coins, school calendar and student support."
     />
     <title>DaltonHCAS House Points</title>
     <link rel="manifest" href="manifest.webmanifest" />
@@ -42,6 +43,7 @@
 
           <p class="login-error" id="login-error" role="alert"></p>
           <button class="primary-button login-button" type="submit">Log in</button>
+          <button class="text-button login-install-button" type="button" data-install-app>Install DaltonHCAS</button>
         </form>
       </div>
     </section>
@@ -141,6 +143,19 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <dialog id="app-install-dialog" class="app-install-dialog" aria-labelledby="app-install-title">
+      <header><h2 id="app-install-title">Install DaltonHCAS</h2><button type="button" class="dialog-close" data-close-install aria-label="Close installation instructions">×</button></header>
+      <p>Free installation. Open the app from its own icon on your phone.</p>
+      <ol></ol>
+      <p class="field-help">An internet connection is required. Updates arrive through the website; you do not need to reinstall. The existing preview password and your school login still apply.</p>
+      <button type="button" class="secondary-button" data-close-install>Got it</button>
+    </dialog>
+    <aside id="app-update-bar" class="app-update-bar" hidden aria-label="Application update">
+      <span role="status">A DaltonHCAS update is available.</span>
+      <button type="button" class="secondary-button" data-apply-app-update>Update</button>
+      <button type="button" class="text-button" data-dismiss-app-update>Later</button>
+    </aside>
+    <script type="module" src="install-client.js"></script>
     <script type="module" src="app.js"></script>
   </body>
 </html>
