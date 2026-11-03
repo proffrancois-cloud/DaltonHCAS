@@ -156,6 +156,7 @@ export function requestUrgentSupport(actor, student, { id, now = new Date().toIS
 export function trustedAdultIds(student) {
   return [...new Set(Array.isArray(student.trustedAdultIds) ? student.trustedAdultIds : [student.trustedAdultId].filter(Boolean))];
 }
+export const pendingTrustedAdults = student => (student.trustedAdultRequests ?? []).filter(request => request.status === "pending");
 export function setTrustedAdults(actor, student, ids, staff) {
   if (actor?.type !== "student" || actor.id !== student.id) throw new Error("Only the student can choose their trusted adults");
   if (!Array.isArray(ids) || ids.some(id => !staff.some(person => person.id === id))) throw new Error("Choose existing members of staff");

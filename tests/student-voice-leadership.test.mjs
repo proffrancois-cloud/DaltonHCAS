@@ -83,7 +83,7 @@ test('captains publish date-specific activities without modifying event paramete
  assert.equal(houseAudience.includes(outside.id),false);
  assert.throws(()=>command(s,outside.id,'event-activity-add',{eventId:houseEvent.id,text:'Wrong house'}));
 });
-test('only responsible staff assign tasks to their own leaders, with private recipient access and read-only student cards',()=>{
+test('only responsible staff assign tasks; group members view them read-only while outsiders cannot',()=>{
  let s=fixture(); const task={scopeKey:'lab:lab-a',leaderIds:['random1'],title:'Prepare equipment',description:'Charge the rover batteries',deadline:'2026-11-04'};
  for(const who of ['random1','random2']) assert.throws(()=>command(s,who,'leader-task-add',task));
  assert.throws(()=>command(s,'david','leader-task-add',{...task,leaderIds:['random2']}));
@@ -91,7 +91,8 @@ test('only responsible staff assign tasks to their own leaders, with private rec
  s=command(s,'david','leader-task-add',task);
  assert.deepEqual(s.notifications.at(-1).recipientIds,['random1']);
  assert.equal(visibleState(s,actorForAccount(s,'random1')).leadershipTasks.length,1);
- assert.equal(visibleState(s,actorForAccount(s,'random2')).leadershipTasks.length,0);
+ assert.equal(visibleState(s,actorForAccount(s,'random2')).leadershipTasks.length,1);
+ assert.equal(visibleState(s,actorForAccount(s,'random3')).leadershipTasks.length,0);
  const html=renderLeadershipWorkspace(s,actorForAccount(s,'random1'),'lab',String);
  assert.match(html,/Prepare equipment/); assert.match(html,/session-lab/); assert.doesNotMatch(html,/data-support-form="leader-task/);
  assert.match(renderLeadershipWorkspace(s,actorForAccount(s,'david'),'lab',String),/data-support-form="leader-task-add"/);

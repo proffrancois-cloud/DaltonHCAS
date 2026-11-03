@@ -261,6 +261,8 @@ async function handleSupportClick(button) {
     await runCloudAction("notification-read", { key: button.dataset.notificationKey });
   } else if (action === "goal-access") {
     await runCloudAction("goal-access", { id: button.dataset.goalId, field: button.dataset.field, canEdit: button.dataset.allow === "true" });
+  } else if (action === "confirm-trusted-adult") {
+    if (await runCloudAction("trusted-adult-confirm", { requestId: button.dataset.requestId })) showToast("Confirmed. The student has been notified.");
   } else if (action === "add-trusted-adult") {
     trustedAdultPickerOpen = true;
     const options = [...viewRoot.querySelectorAll(".trusted-adult-picker button")];
@@ -2526,11 +2528,11 @@ function render() {
     activeView = "dashboard";
     window.history.replaceState(null, "", "#dashboard");
   }
-  const scopes = leadershipScopes(state, activeUser);
+  const scopes = leadershipScopes(state, activeUser, { viewer: true });
   document.querySelectorAll("[data-leadership-nav]").forEach(button => {
-    button.hidden = !scopes.some(scope => scope.type === button.dataset.leadershipNav);
+    button.hidden = activeUser.type !== "student" && !scopes.some(scope => scope.type === button.dataset.leadershipNav);
   });
-  if (["my-house", "my-lab"].includes(activeView) && !scopes.some(scope => scope.type === activeView.slice(3))) activeView = "dashboard";
+  if (activeUser.type !== "student" && ["my-house", "my-lab"].includes(activeView) && !scopes.some(scope => scope.type === activeView.slice(3))) activeView = "dashboard";
   teacherName.textContent = activeUser.name;
   document.querySelector("#mobile-staff-name").textContent = activeUser.name;
   teacherAvatar.alt = `${activeUser.name}'s Dalton Plan House Teams emblem`;

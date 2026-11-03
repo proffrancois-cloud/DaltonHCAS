@@ -711,3 +711,7 @@ legend > span, .concern-section > legend > span { width: 22px; height: 22px; bac
 @media (max-width: 759px) {
   .leadership-workspace input:not([type=checkbox]), .leadership-workspace textarea, .event-activities textarea, .student-concern-response textarea { font-size: 16px; }
 }
+
+.trusted-adult-chip { max-width: 100%; }
+.trusted-adult-chip-label { min-width: 0; overflow-wrap: anywhere; }
+.trusted-adult-chip-label small { display: block; font-size: 10px; color: var(--muted); }

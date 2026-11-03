@@ -4,7 +4,7 @@ import * as followup from "./followup-rules.js";
 import { validateConcernTier } from "./tier-rules.js";
 import { visibleLevelUpDocuments } from "./levelup-resources.js";
 import { recordActivity } from "./activity.js";
-import { applyLeadershipCommand } from "./leadership.js";
+import { applyLeadershipCommand, leadershipScopes } from "./leadership.js";
 
 export function actorForAccount(state, accountId) {
   const teacher = state.teachers.find(item => item.id === accountId);
@@ -30,6 +30,7 @@ export function visibleState(state, actor) {
   if (actor.type === "teacher") return { ...state, notifications, activityEvents: (state.activityEvents ?? []).filter(event => event.actorId === actor.id) };
   const student = state.students.find(item => item.id === actor.id);
   const calendar = data.getCalendarEvents(state, { user: actor });
+  const groupKeys = new Set(leadershipScopes(state, actor, { viewer: true }).map(s => s.key));
   return {
     version: state.version, students: [student],
     teachers: state.teachers.map(({ id, name }) => ({ id, name })),
@@ -48,7 +49,7 @@ export function visibleState(state, actor) {
     houseMeetingLocations: state.houseMeetingLocations,
     levelUpDocuments: visibleLevelUpDocuments(state, actor),
     eventActivities: (state.eventActivities ?? []).filter(a => calendar.some(e => e.id === a.eventId)),
-    leadershipTasks: (state.leadershipTasks ?? []).filter(t => t.leaderIds.includes(actor.id)),
+    leadershipTasks: (state.leadershipTasks ?? []).filter(t => groupKeys.has(t.scopeKey)),
     customCalendarEvents: (state.customCalendarEvents ?? []).filter(base => calendar.some(item => item.id === base.id || item.id.startsWith(`${base.id}::`))),
     calendarEventDetails: Object.fromEntries(calendar.map(item => [item.id, {
       startTime: item.startTime, endTime: item.endTime, location: item.location,
@@ -88,6 +89,35 @@ function recordStudentUpdates(before, next, action, payload, now) {
   }
   if (!alerts.length) return next;
   return { ...next, notifications: [...(next.notifications ?? []), ...alerts.map(alert => ({ ...alert, id: crypto.randomUUID(), readBy: {} }))] };
+}
+
+function updateTrustedAdultSelection(state, actor, action, p, iso) {
+  const student = state.students.find(s => s.id === actor.id);
+  if (!student || actor.type !== "student") throw new Error("Student account required");
+  const active = support.trustedAdultIds(student), pending = support.pendingTrustedAdults(student);
+  const current = [...new Set([...active, ...pending.map(r => r.teacherId)])];
+  const requested = action === "trusted-adult-add" ? [...current, p.teacherId] : action === "trusted-adult-remove" ? current.filter(id => id !== p.teacherId) : p.teacherIds ?? (p.teacherId ? [p.teacherId] : []);
+  support.setTrustedAdults(actor, student, requested, state.teachers); // Validate every requested staff ID without activating it.
+  const wanted = [...new Set(requested)], removed = active.filter(id => !wanted.includes(id));
+  const reason = String(p.reason ?? "").trim();
+  if (reason.length > 2000) throw new Error("Use up to 2000 characters for the optional reason");
+  const requests = (student.trustedAdultRequests ?? []).map(r => r.status === "pending" && !wanted.includes(r.teacherId) ? { ...r, status: "cancelled", cancelledAt: iso } : r);
+  const added = wanted.filter(id => !current.includes(id)).map(teacherId => ({ id: crypto.randomUUID(), teacherId, status: "pending", requestedAt: iso }));
+  const updated = { ...support.setTrustedAdults(actor, student, active.filter(id => wanted.includes(id)), state.teachers), trustedAdultRequests: [...requests, ...added] };
+  const notices = added.map(r => ({ id: crypto.randomUUID(), key: `trusted-adult-request:${r.id}`, kind: "trusted-adult-request", requestId: r.id, studentId: student.id, teacherId: r.teacherId, recipientIds: [r.teacherId], createdAt: iso, readBy: {} }));
+  if (removed.length) notices.push({ id: crypto.randomUUID(), key: `trusted-adult-removed:${student.id}:${crypto.randomUUID()}`, kind: "trusted-adult-removed", studentId: student.id, removedAdultIds: removed, reason, recipientIds: followup.supervisors(state), createdAt: iso, readBy: {} });
+  const cancelled = new Set(requests.filter(r => r.status === "cancelled").map(r => r.id));
+  return { ...state, students: state.students.map(s => s.id === student.id ? updated : s), notifications: [...(state.notifications ?? []).map(n => n.kind === "trusted-adult-request" && cancelled.has(n.requestId) ? { ...n, cancelled: true } : n), ...notices] };
+}
+function confirmTrustedAdult(state, actor, requestId, iso) {
+  const student = state.students.find(s => (s.trustedAdultRequests ?? []).some(r => r.id === requestId));
+  const request = student?.trustedAdultRequests.find(r => r.id === requestId);
+  if (actor.type !== "teacher" || !request || request.teacherId !== actor.id) throw new Error("Only the requested adult can confirm this request");
+  if (request.status === "confirmed") return state;
+  if (request.status !== "pending") throw new Error("This request is no longer pending");
+  const updated = { ...support.setTrustedAdults({ type: "student", id: student.id }, student, [...support.trustedAdultIds(student), actor.id], state.teachers), trustedAdultRequests: student.trustedAdultRequests.map(r => r.id === requestId ? { ...r, status: "confirmed", confirmedAt: iso } : r) };
+  const notice = { id: crypto.randomUUID(), key: `trusted-adult-confirmed:${requestId}`, kind: "trusted-adult-confirmed", studentId: student.id, teacherId: actor.id, recipientIds: [student.id], createdAt: iso, readBy: {} };
+  return { ...state, students: state.students.map(s => s.id === student.id ? updated : s), notifications: [...(state.notifications ?? []).map(n => n.kind === "trusted-adult-request" && n.requestId === requestId ? { ...n, confirmedAt: iso, readBy: { ...n.readBy, [actor.id]: iso } } : n), notice] };
 }
 
 function applyCommand(state, actor, action, p, now) {
@@ -157,18 +187,9 @@ function applyCommand(state, actor, action, p, now) {
     }
     case "concern-response": case "behavior-student-response": case "goal-schedule": case "goal-reflection": case "goal-adult-reflection": case "reflection-reminder":
       return followup.applyFollowupCommand(state, actor, action, p, iso);
-    case "trusted-adult": case "trusted-adult-add": case "trusted-adult-remove": {
-      const student = state.students.find(item => item.id === actor.id);
-      if (!student || actor.type !== "student") throw new Error("Student account required");
-      const oldIds = support.trustedAdultIds(student);
-      const ids = action === "trusted-adult-add" ? [...oldIds, p.teacherId] : action === "trusted-adult-remove" ? oldIds.filter(id => id !== p.teacherId) : p.teacherIds ?? (p.teacherId ? [p.teacherId] : []);
-      const updated = support.setTrustedAdults(actor, student, ids, state.teachers);
-      const removed = oldIds.filter(id => !support.trustedAdultIds(updated).includes(id));
-      const reason = String(p.reason ?? "").trim();
-      if (reason.length > 2000) throw new Error("Use up to 2000 characters for the optional reason");
-      const notices = removed.length ? [{ id: crypto.randomUUID(), key: `trusted-adult-removed:${student.id}:${crypto.randomUUID()}`, kind: "trusted-adult-removed", studentId: student.id, removedAdultIds: removed, reason, recipientIds: followup.supervisors(state), createdAt: iso, readBy: {} }] : [];
-      return { ...state, students: state.students.map(item => item.id === updated.id ? updated : item), notifications: [...(state.notifications ?? []), ...notices] };
-    }
+    case "trusted-adult": case "trusted-adult-add": case "trusted-adult-remove":
+      return updateTrustedAdultSelection(state, actor, action, p, iso);
+    case "trusted-adult-confirm": return confirmTrustedAdult(state, actor, p.requestId, iso);
     case "urgent-support": {
       const student = state.students.find(item => item.id === actor.id);
       if (!student) throw new Error("Student account required");

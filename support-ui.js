@@ -1,4 +1,4 @@
-import { SMART_FIELDS, isSupervisor, trustedAdultIds } from "./support-rules.js";
+import { SMART_FIELDS, isSupervisor, trustedAdultIds, pendingTrustedAdults } from "./support-rules.js";
 import { alphabeticStaff } from "./activity.js";
 import { goalFollowup, scheduleCreator } from "./followup-ui.js";
 
@@ -23,11 +23,12 @@ export function renderSupportDocuments(state, actor, student, esc) {
 }
 
 export function renderTrustedAdults(state, actor, student, esc, { pickerOpen = false } = {}) {
-  const ids = trustedAdultIds(student), own = actor?.type === "student" && actor.id === student.id;
+  const active = trustedAdultIds(student), pending = pendingTrustedAdults(student);
+  const ids = [...new Set([...active, ...pending.map(r => r.teacherId)])], own = actor?.type === "student" && actor.id === student.id;
   const staff = alphabeticStaff(state.teachers);
-  return `<div class="profile-trusted-adults"><h3>Trusted adults</h3><div class="trusted-adult-chips">${ids.map(id => {
+  return `<div class="profile-trusted-adults" id="student-trusted-adults-${esc(student.id)}"><h3>Trusted adults</h3><div class="trusted-adult-chips">${ids.map(id => {
     const person = staff.find(t => t.id === id);
-    return person ? `<span class="trusted-adult-chip">${esc(person.name)}${own ? `<button type="button" data-action="request-remove-trusted-adult" data-teacher-id="${esc(id)}" aria-label="Remove ${esc(person.name)} from trusted adults">×</button>` : ""}</span>` : "";
+    return person ? `<span class="trusted-adult-chip"><span class="trusted-adult-chip-label">${esc(person.name)}${!active.includes(id) ? '<small>Awaiting confirmation</small>' : ""}</span>${own ? `<button type="button" data-action="request-remove-trusted-adult" data-teacher-id="${esc(id)}" aria-label="Remove ${esc(person.name)} from trusted adults">×</button>` : ""}</span>` : "";
   }).join("")}</div>${own ? `<details class="trusted-adult-picker" ${pickerOpen ? "open" : ""}><summary>Add trusted adults</summary><div>${staff.filter(t => !ids.includes(t.id)).map(t => `<button type="button" data-action="add-trusted-adult" data-teacher-id="${esc(t.id)}">${esc(t.name)}</button>`).join("") || '<span>All staff selected</span>'}</div></details>` : ""}</div>`;
 }
 

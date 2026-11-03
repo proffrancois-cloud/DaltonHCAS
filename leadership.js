@@ -1,15 +1,15 @@
-import { HOUSES, getCalendarEvents, isHouseLeaderTeacher, normalizeAttachmentPayload } from "./data.js";
+import { HOUSES, getCalendarEvents, isHouseLeaderTeacher, isStudentInLab, normalizeAttachmentPayload } from "./data.js";
 import { validDate } from "./support-rules.js";
 
-export function leadershipScopes(state, actor) {
+export function leadershipScopes(state, actor, { viewer = false } = {}) {
   if (!actor) return [];
   const staff = actor.type === "teacher" ? state.teachers.find(t => t.id === actor.id) : null;
   const student = actor.type === "student" ? state.students.find(s => s.id === actor.id) : null;
   const admin = staff?.role === "super-admin";
-  const houses = HOUSES.filter(h => admin || (staff && isHouseLeaderTeacher(staff) && staff.houseId === h.id) || (student?.houseId === h.id && (state.leadershipAssignments?.houseLeaders?.[h.id] ?? []).includes(student.id)));
+  const houses = HOUSES.filter(h => admin || (staff && isHouseLeaderTeacher(staff) && staff.houseId === h.id) || (student?.houseId === h.id && (viewer || (state.leadershipAssignments?.houseLeaders?.[h.id] ?? []).includes(student.id))));
   return [
     ...houses.map(h => ({ key: `house:${h.id}`, type: "house", id: h.id, name: h.name, leaderIds: state.leadershipAssignments?.houseLeaders?.[h.id] ?? [] })),
-    ...(state.leadershipAssignments?.labs ?? []).filter(l => admin || (staff && l.teacherIds?.includes(staff.id)) || (student && l.leaderIds?.includes(student.id)))
+    ...(state.leadershipAssignments?.labs ?? []).filter(l => admin || (staff && l.teacherIds?.includes(staff.id)) || (student && (viewer ? isStudentInLab(l, student.id) : l.leaderIds?.includes(student.id))))
       .map(l => ({ key: `lab:${l.id}`, type: "lab", id: l.id, name: l.name, leaderIds: l.leaderIds ?? [] }))
   ];
 }
@@ -20,7 +20,7 @@ export function canPublishEventActivity(state, actor, event) {
   return Boolean(eventScopeKey(event) && leadershipScopes(state, actor).some(s => s.key === eventScopeKey(event)));
 }
 export function leadershipEvents(state, actor, type) {
-  const keys = new Set(leadershipScopes(state, actor).filter(s => s.type === type).map(s => s.key));
+  const keys = new Set(leadershipScopes(state, actor, { viewer: true }).filter(s => s.type === type).map(s => s.key));
   return getCalendarEvents(state, { user: actor }).filter(e => keys.has(eventScopeKey(e)));
 }
 function attachment(input) {
