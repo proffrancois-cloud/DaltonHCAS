@@ -45,6 +45,14 @@ search; results appear after a search or explicit filter choice. Keep House poin
 and student ranking in equal dashboard columns and personal activity below them.
 Profile creation actions belong in their corresponding record headers.
 
+The desktop sidebar contains only the Dalton emblem, a 2×2 House counter grid,
+navigation and account controls; the House header stays on phones. Use the full
+content width with modest gutters. The dashboard has one personal activity timeline
+beside Notifications, above the calendar. Recognition, concern and SMART actions
+share that timeline and its filters. Form steps are native accordions: first open,
+others closed initially, gold numbers and red titles. Additional record editors are
+chosen from an inline + button and a surname-sorted, searchable staff dialog.
+
 ## Accessibility & Inclusion
 
 Use clear contrast, readable type, large click targets, semantic buttons and labels, visible focus states, and reduced-motion support. Do not require users to configure accessibility settings before using the app.

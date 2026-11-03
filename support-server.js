@@ -3,6 +3,7 @@ import * as support from "./support-rules.js";
 import * as followup from "./followup-rules.js";
 import { validateConcernTier } from "./tier-rules.js";
 import { visibleLevelUpDocuments } from "./levelup-resources.js";
+import { recordActivity } from "./activity.js";
 
 export function actorForAccount(state, accountId) {
   const teacher = state.teachers.find(item => item.id === accountId);
@@ -25,7 +26,7 @@ export function synchronizeAlerts(state, today) {
 export function visibleState(state, actor) {
   const notifications = (state.notifications ?? []).filter(item => item.recipientIds.includes(actor.id))
     .map(item => ({ ...item, recipientIds: actor.type === "teacher" ? item.recipientIds : [actor.id], readBy: { [actor.id]: item.readBy?.[actor.id] ?? null } }));
-  if (actor.type === "teacher") return { ...state, notifications };
+  if (actor.type === "teacher") return { ...state, notifications, activityEvents: (state.activityEvents ?? []).filter(event => event.actorId === actor.id) };
   const student = state.students.find(item => item.id === actor.id);
   const calendar = data.getCalendarEvents(state, { user: actor });
   return {
@@ -60,6 +61,10 @@ function adminOnly(actor) {
 }
 
 export function applySchoolCommand(state, actor, action, p, now = Date.now()) {
+  return recordActivity(state, applyCommand(state, actor, action, p, now), actor, action, p, now);
+}
+
+function applyCommand(state, actor, action, p, now) {
   const iso = new Date(now).toISOString();
   const teacherActions = new Set(["award-add", "award-update", "award-remove", "concern-add", "concern-update"]);
   if (teacherActions.has(action)) teacherOnly(actor);

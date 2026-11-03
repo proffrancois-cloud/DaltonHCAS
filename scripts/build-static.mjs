@@ -8,6 +8,8 @@ const publicEntries = [
   "index.html",
   "app.js",
   "student-ui.js",
+  "activity.js",
+  "form-steps.js",
   "calendar-data.js",
   "concerns-data.js",
   "data.js",

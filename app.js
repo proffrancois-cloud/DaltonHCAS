@@ -44,11 +44,9 @@ import {
   getStudentRanking,
   getStudentStats,
   getStudentTotal,
-  getTeacherAwards,
   getTeacherPermissions,
   getTeacherLevelUpGrades,
   isHouseLeaderTeacher,
-  getTeacherStats,
   migrateStoredState,
   removeAward as localRemoveAward,
   removeLabAssignment as localRemoveLabAssignment,
@@ -68,8 +66,12 @@ import { enablePhonePush, disablePhonePush, initializePhonePush } from "./push-c
 import { renderLevelUpAttachments, canReadLevelUpDocument } from "./levelup-resources.js";
 import { openPdfReader } from "./pdf-reader.js";
 import { emptyStudentFilters, hasStudentFilter, matchingStudents, studentCrestVisual } from "./student-ui.js";
+import { ACTIVITY_TYPES, ACTIVITY_ACTIONS, staffActivity, filterActivity, recordActivity, alphabeticStaff } from "./activity.js";
+import { rememberFormSteps, enhanceFormSteps, revealInvalidField } from "./form-steps.js";
 let phonePushStatus = "";
 let crestInstance = 0;
+const formStepState = new Map();
+const activityFilters = { query: "", type: "", action: "", house: "", grade: "", from: "", to: "", valueId: "", points: "" };
 
 let pendingCloudCommand = null;
 let cloudSnapshot = null;
@@ -77,7 +79,7 @@ let cloudBusy = false;
 let mustChangePassword = false;
 function stageCloud(action, payload, nextState) {
   if (cloudEnabled) pendingCloudCommand = { action, payload };
-  return nextState;
+  return cloudEnabled ? nextState : recordActivity(state, nextState, activeUser, action, payload);
 }
 const addAward = (s, studentId, valueId, teacherId, points, now, comment, editorIds) => stageCloud("award-add", { studentId, valueId, points, comment, editorIds }, localAddAward(s, studentId, valueId, teacherId, points, now, comment, editorIds));
 const removeAward = (s, id, teacherId) => stageCloud("award-remove", { id }, localRemoveAward(s, id, teacherId));
@@ -133,7 +135,6 @@ const profileConcernFilters = {
   academic: "all",
   sel: "all"
 };
-let expandedTeacherValueId = null;
 let lastConfirmation = null;
 let rankingValueFilter = "";
 let rankingFilters = emptyStudentFilters();
@@ -385,6 +386,7 @@ function setView(view, options = {}) {
   if (activeUser.type === "student" && !["dashboard", "students"].includes(view)) view = "dashboard";
   if (view === "administration" && !canAccessAdministration()) view = "dashboard";
   if (view !== activeView && !options.studentId) resetRosterFilters(view);
+  if (view !== activeView) for (const key of formStepState.keys()) if (key.startsWith(`${view}:`)) formStepState.delete(key);
   if (concernStudentFilters[view] && !options.presetStudentId) concernStudentPreset = null;
   if (options.presetStudentId) {
     const student = getStudent(options.presetStudentId);
@@ -437,36 +439,30 @@ function getRequiredRecordEditors() {
 
 function renderEditorAccessPicker({ selectedIds = [], authorId = activeTeacher?.id } = {}) {
   const requiredEditors = getRequiredRecordEditors();
-  const optionalEditors = (state.teachers ?? TEACHERS).filter(
-    (teacher) =>
-      teacher.id !== authorId &&
-      !getTeacherPermissions(teacher).canEditAllStudentRecords
-  );
+  const optionalEditors = alphabeticStaff((state.teachers ?? TEACHERS).filter(teacher => teacher.id !== authorId && !getTeacherPermissions(teacher).canEditAllStudentRecords));
   const author = getTeacher(authorId);
-  const alwaysNames = [author, ...requiredEditors]
-    .filter(Boolean)
-    .filter((teacher, index, list) => list.findIndex((item) => item.id === teacher.id) === index);
+  const alwaysNames = [author, ...requiredEditors].filter(Boolean).filter((teacher, index, list) => list.findIndex(item => item.id === teacher.id) === index);
   const selected = new Set(selectedIds ?? []);
-
-  return `
-    <div class="editor-access-picker">
-      <div class="editor-access-heading">
-        <div><span>The author, super admins and supervising teachers always have editing access.</span></div>
-      </div>
-      <div class="required-editor-list" aria-label="Editors who always have access">
-        ${alwaysNames.map((teacher) => `<span title="This access cannot be removed"><b aria-hidden="true">🔒</b>${escapeHtml(teacher.name)}<small>${teacher.id === authorId ? "Author" : TEACHER_ROLE_LABELS[teacher.role]}</small></span>`).join("")}
-        ${!requiredEditors.some((teacher) => teacher.role === "teacher-supervising") ? '<span class="is-policy"><b aria-hidden="true">🔒</b>Teacher supervising<small>Automatically included when assigned</small></span>' : ""}
-      </div>
-      <details class="optional-editor-picker" ${selected.size ? "open" : ""}>
-        <summary>Grant editing access to other staff <span>${selected.size ? `${selected.size} selected` : "Optional"}</span></summary>
-        <div class="optional-editor-grid">
-          ${optionalEditors.length
-            ? optionalEditors.map((teacher) => `<label><input type="checkbox" name="editorIds" value="${teacher.id}" ${selected.has(teacher.id) ? "checked" : ""} /><span><strong>${escapeHtml(teacher.name)}</strong><small>${TEACHER_ROLE_LABELS[teacher.role] ?? "Regular teacher"}</small></span></label>`).join("")
-            : "<p>No additional staff accounts are available.</p>"}
-        </div>
-      </details>
+  const dialogId = `editor-picker-${++crestInstance}`;
+  return `<div class="editor-access-picker">
+    <div class="required-editor-list" aria-label="Editors who always have access">
+      ${alwaysNames.map(teacher => `<span title="This access cannot be removed"><b aria-hidden="true">🔒</b>${escapeHtml(teacher.name)}<small>${teacher.id === authorId ? "Author" : TEACHER_ROLE_LABELS[teacher.role]}</small></span>`).join("")}
+      ${!requiredEditors.some(teacher => teacher.role === "teacher-supervising") ? '<span class="is-policy"><b aria-hidden="true">🔒</b>Teacher supervising<small>Included when assigned</small></span>' : ""}
+      <span class="additional-editor-chips">${optionalEditors.filter(t => selected.has(t.id)).map(t => `<span>${escapeHtml(t.name)}</span>`).join("")}</span>
+      <button type="button" class="add-editor-button" data-action="open-editor-picker" aria-label="Add staff editors" aria-haspopup="dialog">+</button>
     </div>
-  `;
+    <dialog class="editor-picker-dialog" aria-labelledby="${dialogId}-title">
+      <header><h2 id="${dialogId}-title">Add staff editors</h2><button type="button" class="dialog-close" data-action="close-editor-picker" aria-label="Close staff picker">×</button></header>
+      <label class="editor-search-label">Search staff<input type="search" data-editor-search placeholder="Type a name" autocomplete="off" /></label>
+      <div class="optional-editor-grid">${optionalEditors.map(teacher => `<label><input type="checkbox" name="editorIds" value="${teacher.id}" ${selected.has(teacher.id) ? "checked" : ""} /><span><strong>${escapeHtml(teacher.name)}</strong><small>${TEACHER_ROLE_LABELS[teacher.role] ?? "Regular teacher"}</small></span></label>`).join("") || '<p>No additional staff accounts.</p>'}</div>
+      <footer><button type="button" class="primary-button" data-action="close-editor-picker">Done</button></footer>
+    </dialog>
+  </div>`;
+}
+
+function refreshEditorChips(picker) {
+  const names = [...picker.querySelectorAll('[name="editorIds"]:checked')].map(input => input.closest("label").querySelector("strong").textContent);
+  picker.querySelector(".additional-editor-chips").innerHTML = names.map(name => `<span>${escapeHtml(name)}</span>`).join("");
 }
 
 function renderRecordAccessSummary(record) {
@@ -1052,16 +1048,8 @@ function renderSchoolCalendar() {
   `;
 }
 
-function renderPageHeader(title, description, action = "") {
-  return `
-    <header class="page-header">
-      <div>
-        <h1>${title}</h1>
-        ${description ? `<p>${description}</p>` : ""}
-      </div>
-      ${action}
-    </header>
-  `;
+function renderPageHeader(title, description) {
+  return `<h1 class="sr-only">${title}</h1>${description ? `<p class="page-context">${description}</p>` : ""}`;
 }
 
 function renderCupIcon() {
@@ -1081,7 +1069,7 @@ function renderTopbarHouseScores() {
         (checkIn) => checkIn.studentId === activeStudent.id && checkIn.date === getTodayInputValue()
       )
     : false;
-  topbarHouseScores.innerHTML = HOUSES.map(
+  const houses = HOUSES.map(
     (house) => `
       <button
         class="topbar-house-score"
@@ -1095,13 +1083,17 @@ function renderTopbarHouseScores() {
         <span>${totals[house.id].toLocaleString()}</span>
       </button>
     `
-  ).join("") + (activeStudent ? `
+  ).join("");
+  const studentTools = activeStudent ? `
     <button class="sel-check-in-trigger ${hasTodayCheckIn ? "is-complete" : ""}" type="button" data-action="open-sel-check-in">
       <span aria-hidden="true">${hasTodayCheckIn ? "✓" : "♡"}</span>
       ${hasTodayCheckIn ? "Check-in complete" : "Daily SEL check-in"}
     </button>
     <button class="student-mobile-logout" type="button" data-action="logout">Log out</button>
-  ` : "");
+  ` : "";
+  topbarHouseScores.innerHTML = houses + studentTools;
+  document.querySelector("#sidebar-house-scores").innerHTML = houses;
+  document.querySelector("#sidebar-student-tools").innerHTML = studentTools;
 }
 
 function renderSelCheckInModal() {
@@ -1246,8 +1238,10 @@ function renderDashboard() {
   return `
     <div class="page">
       ${renderPageHeader("Dashboard", "")}
-      ${cloudEnabled ? renderSupportNotifications(state, activeUser, escapeHtml) : ""}
-
+      <div class="dashboard-overview">
+        ${renderSupportNotifications(state, activeUser, escapeHtml)}
+        ${renderTeacherActivity()}
+      </div>
       ${renderSchoolCalendar()}
 
       <div class="dashboard-layout">
@@ -1307,7 +1301,6 @@ function renderDashboard() {
 
         ${renderStudentRanking()}
       </div>
-      ${renderTeacherActivity()}
     </div>
   `;
 }
@@ -1811,14 +1804,9 @@ function renderBehaviorConcern() {
       ${renderConcernConfirmation()}
 
       <form id="behavior-concern-form" class="panel concern-form">
-        <div class="concern-source-note">
-          <strong>HCAS Student Behavior Code</strong>
-          <span>Issue levels and required actions below come only from the school code.</span>
-        </div>
 
         <fieldset class="concern-section">
           <legend><span>1</span> Students involved</legend>
-          <p class="field-help">Select one or more students. Linked students remain visible to teachers only.</p>
           ${renderConcernStudentSelector()}
         </fieldset>
 
@@ -1935,14 +1923,9 @@ function renderAcademicConcern() {
       ${renderConcernConfirmation()}
 
       <form id="academic-concern-form" class="panel concern-form">
-        <div class="concern-source-note is-teacher-only">
-          <strong>Teacher-only record</strong>
-          <span>Academic concerns are visible to authenticated teachers and are never included in a student view.</span>
-        </div>
 
         <fieldset class="concern-section">
           <legend><span>1</span> Students involved</legend>
-          <p class="field-help">Select one or more students. Each profile receives the concern without exposing the other students involved.</p>
           ${renderConcernStudentSelector()}
         </fieldset>
 
@@ -2025,14 +2008,9 @@ function renderSelConcern() {
       ${renderPageHeader("SEL concern", "")}
       ${renderConcernConfirmation()}
       <form id="sel-concern-form" class="panel concern-form">
-        <div class="concern-source-note is-teacher-only">
-          <strong>Teacher-only SEL record</strong>
-          <span>The screenshot categories and the MTSS PDF overlap only partially. Each option below shows its closest PDF example and linked strategies.</span>
-        </div>
 
         <fieldset class="concern-section">
           <legend><span>1</span> Students involved</legend>
-          <p class="field-help">Select one or more students. SEL records are never visible in a student session.</p>
           ${renderConcernStudentSelector()}
         </fieldset>
 
@@ -2210,7 +2188,7 @@ function renderStudentCoinTable(student) {
                     const value = getValue(award.valueId);
                     const teacher = getTeacher(award.teacherId);
                     return `
-                      <tr>
+                      <tr id="award-${award.id}">
                         <td><time datetime="${award.createdAt}">${formatDateTime(award.createdAt)}</time></td>
                         <td><span class="table-value"><span class="value-mini-logo" style="--value-logo: url('${value.image}')" aria-hidden="true"></span>${value.name}</span></td>
                         <td>${teacher.name}</td>
@@ -2503,140 +2481,67 @@ function renderStudentDetail() {
   `;
 }
 
-function renderTeacherValueHistory(value, awards) {
-  const valueAwards = awards.filter((award) => award.valueId === value.id);
+function renderActivityRows() {
+  const events = filterActivity(staffActivity(state, activeUser), activityFilters);
+  return events.length ? events.map(event => {
+    const student = event.participants.map(p => getStudent(p.id)).find(Boolean);
+    const award = event.recordKind === "award" ? state.awards.find(a => a.id === event.recordId) : null;
+    const recordId = `${event.recordKind === "goal" ? "goal" : event.recordKind === "award" ? "award" : "concern"}-${event.recordId}`;
+    return `<tr><td><time datetime="${escapeHtml(event.at)}">${new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Taipei", dateStyle: "medium", timeStyle: "short" }).format(new Date(event.at))}</time></td>
+      <td>${ACTIVITY_TYPES[event.type] ?? "SMART goal"}</td>
+      <td>${student ? `<button type="button" class="text-button activity-record-link" data-action="open-support-record" data-student-id="${student.id}" data-record-id="${escapeHtml(recordId)}">${escapeHtml(event.description)}</button>` : escapeHtml(event.description)}
+        ${event.valueId ? `<small>${escapeHtml(getValue(event.valueId)?.name ?? "")}</small>` : ""}
+        ${award ? `<div class="activity-record-actions">${renderRecordEditButton("award", award)}${canEditStudentRecord(state, activeTeacher.id, award) ? `<button type="button" class="unsend-button" data-action="unsend-points" data-award-id="${award.id}">Unsend points</button>` : ""}</div>` : ""}
+      </td><td><div class="activity-people">${event.participants.map(person => {
+        const current = getStudent(person.id);
+        return current ? renderStudentIdentity(current, { action: true, className: "is-compact", points: getStudentTotal(state, current.id) }) : escapeHtml(person.name);
+      }).join("")}</div></td></tr>`;
+  }).join("") : '<tr><td colspan="4" class="empty-table-cell">No activity to show.</td></tr>';
+}
 
-  return `
-    <div class="teacher-value-history" id="teacher-${value.id}-history">
-      <div class="value-history-heading">
-        <strong>${value.name} history</strong>
-        <span>${valueAwards.length} ${valueAwards.length === 1 ? "recognition" : "recognitions"}</span>
-      </div>
-      ${valueAwards.length ? `
-        <ul>
-          ${valueAwards
-            .map((award) => {
-              const student = getStudent(award.studentId);
-              const house = getHouse(student.houseId);
-              return `
-                <li>
-                  <div class="teacher-history-entry">
-                    ${renderStudentIdentity(student, {
-                      secondary: `Grade ${student.grade} · ${house.name}`,
-                      points: formatSignedPoints(award.points),
-                      action: true,
-                      className: "is-compact"
-                    })}
-                    ${renderRecognitionComment(award.comment)}
-                  </div>
-                  <time datetime="${award.createdAt}">Published ${formatDateTime(award.createdAt)}</time>
-                </li>
-              `;
-            })
-            .join("")}
-        </ul>
-      ` : '<p class="empty-value-history">No recognitions for this 7C yet.</p>'}
-    </div>
-  `;
+function updateActivityFilter(control) {
+  activityFilters[control.dataset.activityFilter] = control.value;
+  if (activityFilters.from && activityFilters.to && activityFilters.from > activityFilters.to) {
+    const other = control.dataset.activityFilter === "from" ? "to" : "from";
+    activityFilters[other] = control.value;
+    document.querySelector(`[data-activity-filter="${other}"]`).value = control.value;
+  }
+  const from = document.querySelector('[data-activity-filter="from"]'), to = document.querySelector('[data-activity-filter="to"]');
+  if (from && to) { from.max = activityFilters.to; to.min = activityFilters.from; }
+  refreshActivityTimeline();
+}
+
+function refreshActivityTimeline() {
+  const body = document.querySelector("#activity-timeline-body");
+  if (body) body.innerHTML = renderActivityRows();
+  const all = staffActivity(state, activeUser), count = filterActivity(all, activityFilters).length;
+  const active = Object.values(activityFilters).filter(Boolean).length;
+  const counter = document.querySelector("#activity-timeline-count");
+  if (counter) counter.textContent = active ? `${count} / ${all.length}` : String(all.length);
+  const summary = document.querySelector(".activity-filter-panel > summary");
+  if (summary) summary.textContent = `Filter activity${active ? ` · ${active} active` : ""}`;
 }
 
 function renderTeacherActivity() {
-  const awards = getTeacherAwards(state, activeTeacher.id);
-  const stats = getTeacherStats(state, activeTeacher.id);
-  const totalPoints = awards.reduce((total, award) => total + award.points, 0);
-  const maxRecognitions = Math.max(...Object.values(stats).map((stat) => stat.recognitions), 1);
-
-  return `
-    <section class="teacher-activity-section" aria-labelledby="teacher-activity-title">
-      <h2 id="teacher-activity-title">My activity</h2>
-      <div class="teacher-activity-layout">
-        <section class="panel teacher-breakdown-panel" aria-labelledby="teacher-breakdown-title">
-          <div class="panel-heading">
-            <div>
-              <h2 id="teacher-breakdown-title">7C breakdown</h2>
-            </div>
-            <span class="teacher-total">${totalPoints} pts</span>
-          </div>
-
-          <div class="teacher-stats">
-            ${VALUES.map((value) => {
-              const stat = stats[value.id];
-              const width = (stat.recognitions / maxRecognitions) * 100;
-              const isExpanded = expandedTeacherValueId === value.id;
-              return `
-                <div class="teacher-value-entry ${isExpanded ? "is-expanded" : ""}">
-                  <button
-                    class="teacher-stat-row"
-                    type="button"
-                    data-action="toggle-teacher-value"
-                    data-value-id="${value.id}"
-                    aria-expanded="${isExpanded}"
-                    aria-controls="teacher-${value.id}-history"
-                  >
-                    <span class="value-mini-logo" style="--value-logo: url('${value.image}')" aria-hidden="true"></span>
-                    <span class="teacher-stat-name">
-                      <strong>${value.name}</strong>
-                      <span class="breakdown-track" aria-hidden="true"><span style="width: ${width}%"></span></span>
-                    </span>
-                    <span class="teacher-coin-count">${stat.recognitions} ${stat.recognitions === 1 ? "coin" : "coins"}</span>
-                    <b>${stat.points}</b>
-                    <svg class="value-chevron" aria-hidden="true" viewBox="0 0 24 24"><path d="m8 10 4 4 4-4" /></svg>
-                  </button>
-                  ${isExpanded ? renderTeacherValueHistory(value, awards) : ""}
-                </div>
-              `;
-            }).join("")}
-          </div>
-        </section>
-
-        <section class="panel teacher-history-panel" aria-labelledby="teacher-history-title">
-          <div class="panel-heading">
-            <div>
-              <h2 id="teacher-history-title">Recognition history</h2>
-            </div>
-            <span class="history-count">${awards.length}</span>
-          </div>
-
-          ${awards.length ? `
-            <ul class="teacher-history-list">
-              ${awards.map((award) => {
-                const student = getStudent(award.studentId);
-                const house = getHouse(student.houseId);
-                const value = getValue(award.valueId);
-                return `
-                  <li>
-                    <div class="teacher-history-entry">
-                      ${renderStudentIdentity(student, {
-                        secondary: `${value.name} · ${house.name}`,
-                        points: formatSignedPoints(award.points),
-                        action: true,
-                        className: "is-compact"
-                      })}
-                      ${renderRecognitionComment(award.comment)}
-                    </div>
-                    <time class="recognition-time" datetime="${award.createdAt}">Published ${formatDateTime(award.createdAt)}</time>
-                    ${renderRecordEditButton("award", award)}
-                    <button
-                      class="unsend-button"
-                      type="button"
-                      data-action="unsend-points"
-                      data-award-id="${award.id}"
-                      aria-label="Unsend ${award.points} points from ${student.name}"
-                    >Unsend points</button>
-                  </li>
-                `;
-              }).join("")}
-            </ul>
-          ` : `
-            <div class="empty-state">
-              <strong>No activity yet</strong>
-              <p>Your first recognition will appear here.</p>
-            </div>
-          `}
-        </section>
-      </div>
-    </section>
-  `;
+  const events = staffActivity(state, activeUser);
+  const actions = [...new Set(events.map(event => event.action))];
+  const filterCount = Object.values(activityFilters).filter(Boolean).length;
+  return `<section class="panel activity-timeline" aria-labelledby="activity-timeline-title">
+    <div class="panel-heading"><h2 id="activity-timeline-title">My activity</h2><span id="activity-timeline-count" role="status">${filterCount ? `${filterActivity(events, activityFilters).length} / ${events.length}` : events.length}</span></div>
+    <details class="activity-filter-panel" ${filterCount ? "open" : ""}><summary>Filter activity${filterCount ? ` · ${filterCount} active` : ""}</summary><div class="activity-filter-grid">
+      <label>Type<select data-activity-filter="type"><option value="">All types</option>${Object.entries(ACTIVITY_TYPES).map(([id, name]) => `<option value="${id}" ${activityFilters.type === id ? "selected" : ""}>${name}</option>`).join("")}</select></label>
+      <label>Action<select data-activity-filter="action"><option value="">All actions</option>${actions.map(id => `<option value="${id}" ${activityFilters.action === id ? "selected" : ""}>${ACTIVITY_ACTIONS[id]}</option>`).join("")}</select></label>
+      <label>Student<input data-activity-filter="query" type="search" placeholder="Search name" value="${escapeHtml(activityFilters.query)}" /></label>
+      <label>House<select data-activity-filter="house"><option value="">All houses</option>${HOUSES.map(h => `<option value="${h.id}" ${activityFilters.house === h.id ? "selected" : ""}>${h.name}</option>`).join("")}</select></label>
+      <label>Grade<select data-activity-filter="grade"><option value="">All grades</option>${getAvailableGrades().map(g => `<option value="${g}" ${activityFilters.grade === String(g) ? "selected" : ""}>Grade ${g}</option>`).join("")}</select></label>
+      <label>7C<select data-activity-filter="valueId"><option value="">All 7Cs</option>${VALUES.map(value => `<option value="${value.id}" ${activityFilters.valueId === value.id ? "selected" : ""}>${value.name}</option>`).join("")}</select></label>
+      <label>Points<select data-activity-filter="points"><option value="">All amounts</option>${[...POINT_OPTIONS.map(n => -n).reverse(), ...POINT_OPTIONS].map(points => `<option value="${points}" ${activityFilters.points === String(points) ? "selected" : ""}>${formatSignedPoints(points)}</option>`).join("")}</select></label>
+      <label>From<input data-activity-filter="from" type="date" value="${activityFilters.from}" max="${activityFilters.to}" /></label>
+      <label>To<input data-activity-filter="to" type="date" value="${activityFilters.to}" min="${activityFilters.from}" /></label>
+      <button type="button" class="text-button" data-action="clear-activity-filters">Clear filters</button>
+    </div></details>
+    <div class="activity-table-scroll"><table class="activity-timeline-table"><thead><tr><th scope="col">Date</th><th scope="col">Type</th><th scope="col">Activity</th><th scope="col">Students</th></tr></thead><tbody id="activity-timeline-body">${renderActivityRows()}</tbody></table></div>
+  </section>`;
 }
 
 function refreshStudentBrowser() {
@@ -2725,6 +2630,7 @@ function toggleConditionalField(toggleId, fieldId) {
 }
 
 function render() {
+  rememberFormSteps(viewRoot, formStepState);
   const isLoggedIn = Boolean(activeUser);
   document.body.classList.toggle("is-logged-out", !isLoggedIn);
   document.body.classList.toggle("is-student-session", activeUser?.type === "student");
@@ -2732,6 +2638,8 @@ function render() {
   if (!isLoggedIn) {
     viewRoot.innerHTML = "";
     topbarHouseScores.innerHTML = "";
+    document.querySelector("#sidebar-house-scores").innerHTML = "";
+    document.querySelector("#sidebar-student-tools").innerHTML = "";
     return;
   }
 
@@ -2786,9 +2694,10 @@ function render() {
   const pushStatus = viewRoot.querySelector("[data-push-status]");
   if (pushStatus) pushStatus.textContent = phonePushStatus;
   if (cloudEnabled && ["behavior-concern", "academic-concern", "sel-concern"].includes(activeView)) {
-    viewRoot.querySelector(".form-submit-bar")?.insertAdjacentHTML("beforebegin", `<fieldset class="concern-section"><legend>Notify staff for follow-up</legend><p>All supervising teachers and super admins are included automatically. Add other staff below.</p><details><summary>Additional recipients</summary>${state.teachers.filter(t => !isSupervisor({ ...t, type: "teacher" })).map(t => `<label class="checkbox-label"><input type="checkbox" name="notificationRecipientIds" value="${escapeHtml(t.id)}" />${escapeHtml(t.name)}</label>`).join("")}</details></fieldset><label class="checkbox-label plan-request-toggle"><input type="checkbox" name="requestSmartGoal" /> Notify supervising staff: a SMART support plan may help this student</label>`);
+    viewRoot.querySelector(".form-submit-bar")?.insertAdjacentHTML("beforebegin", `<fieldset class="concern-section"><legend>Notify staff for follow-up</legend><p>All supervising teachers and super admins are included automatically. Add other staff below.</p><details><summary>Additional recipients</summary>${state.teachers.filter(t => !isSupervisor({ ...t, type: "teacher" })).map(t => `<label class="checkbox-label"><input type="checkbox" name="notificationRecipientIds" value="${escapeHtml(t.id)}" />${escapeHtml(t.name)}</label>`).join("")}</details><label class="checkbox-label plan-request-toggle"><input type="checkbox" name="requestSmartGoal" /> Notify supervising staff: a SMART support plan may help this student</label></fieldset>`);
   }
 
+  enhanceFormSteps(viewRoot, activeView, formStepState);
   window.requestAnimationFrame(() => {
     syncCalendarCreationScope();
     if (activeView === "behavior-concern") updateBehaviorCodePreview();
@@ -2905,6 +2814,20 @@ document.addEventListener("click", async (event) => {
       }
       await commitState(removeLabAssignment(state, actionTarget.dataset.labId), "Lab leader access removed.");
       break;
+    case "open-editor-picker": {
+      const dialog = actionTarget.closest(".editor-access-picker").querySelector("dialog");
+      dialog.showModal();
+      dialog.querySelector("[data-editor-search]").focus();
+      break;
+    }
+    case "close-editor-picker":
+      actionTarget.closest("dialog").close();
+      break;
+    case "clear-activity-filters":
+      Object.keys(activityFilters).forEach(key => activityFilters[key] = "");
+      document.querySelectorAll("[data-activity-filter]").forEach(el => el.value = "");
+      refreshActivityTimeline();
+      break;
     case "logout":
       document.querySelector("#school-pdf-reader")?.close();
       if (cloudEnabled) { await cloudLogout(); state = createInitialState(); cloudSnapshot = null; }
@@ -2916,7 +2839,6 @@ document.addEventListener("click", async (event) => {
       resetSendSelection();
       expandedStudentValueId = null;
       resetProfileConcernFilters();
-      expandedTeacherValueId = null;
       concernStudentPreset = null;
       lastConcernConfirmation = null;
       window.location.hash = "dashboard";
@@ -3061,17 +2983,6 @@ document.addEventListener("click", async (event) => {
       });
       break;
     }
-    case "toggle-teacher-value": {
-      const valueId = actionTarget.dataset.valueId;
-      expandedTeacherValueId = expandedTeacherValueId === valueId ? null : valueId;
-      render();
-      window.requestAnimationFrame(() => {
-        document
-          .querySelector(`[data-action="toggle-teacher-value"][data-value-id="${valueId}"]`)
-          ?.focus({ preventScroll: true });
-      });
-      break;
-    }
     case "close-student-detail":
       profileStudentId = null;
       expandedStudentValueId = null;
@@ -3140,7 +3051,14 @@ document.addEventListener("click", async (event) => {
   } catch (error) { showToast(error.message); render(); }
 });
 
+viewRoot.addEventListener("invalid", event => revealInvalidField(event.target), true);
+viewRoot.addEventListener("keydown", event => {
+  if (event.key === "Enter" && event.target.matches("[data-editor-search]")) event.preventDefault();
+});
+
 viewRoot.addEventListener("change", (event) => {
+  if (event.target.matches("[data-activity-filter]")) { updateActivityFilter(event.target); return; }
+  if (event.target.matches('[name="editorIds"]')) refreshEditorChips(event.target.closest(".editor-access-picker"));
   if (event.target.matches('#custom-calendar-event-form [name="scope"]')) { syncCalendarCreationScope(); return; }
   if (event.target.matches("#calendar-grade-filter")) {
     calendarTeacherGrade = event.target.value;
@@ -3224,6 +3142,12 @@ viewRoot.addEventListener("change", (event) => {
 });
 
 viewRoot.addEventListener("input", (event) => {
+  if (event.target.matches("[data-activity-filter]")) { updateActivityFilter(event.target); return; }
+  if (event.target.matches("[data-editor-search]")) {
+    const query = event.target.value.trim().toLowerCase();
+    event.target.closest("dialog").querySelectorAll(".optional-editor-grid > label").forEach(label => label.hidden = !label.textContent.toLowerCase().includes(query));
+    return;
+  }
   if (event.target.matches("[data-student-search]")) {
     updateStudentFilters(event.target.dataset.studentSearch, { query: event.target.value });
   } else if (event.target.matches("#send-comment")) {
