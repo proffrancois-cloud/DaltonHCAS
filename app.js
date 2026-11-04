@@ -91,7 +91,7 @@ function stageCloud(action, payload, nextState) {
 const addAward = (s, studentId, valueId, teacherId, points, now, comment, editorIds) => stageCloud("award-add", { studentId, valueId, points, comment, editorIds }, localAddAward(s, studentId, valueId, teacherId, points, now, comment, editorIds));
 const removeAward = (s, id, teacherId) => stageCloud("award-remove", { id }, localRemoveAward(s, id, teacherId));
 const updateAward = (s, id, teacherId, changes) => stageCloud("award-update", { id, changes }, localUpdateAward(s, id, teacherId, changes));
-const stageConcern = (type, fn, s, input) => stageCloud("concern-add", { type, input: { ...input, requestSmartGoal: Boolean(document.querySelector('[name="requestSmartGoal"]:checked')), notificationRecipientIds: [...document.querySelectorAll('[name="notificationRecipientIds"]:checked')].map(el => el.value) } }, fn(s, input));
+const stageConcern = (type, fn, s, input) => stageCloud("concern-add", { type, input: { ...input, requestSmartGoal: Boolean(document.querySelector('[name="requestSmartGoal"]:checked')) } }, fn(s, input));
 const addBehaviorConcern = (s, input) => stageConcern("behavior", localAddBehaviorConcern, s, input);
 const addAcademicConcern = (s, input) => stageConcern("academic", localAddAcademicConcern, s, input);
 const addSelConcern = (s, input) => stageConcern("sel", localAddSelConcern, s, input);
@@ -323,6 +323,10 @@ async function handleSupportSubmit(form) {
       if (!file?.size || !/\.pdf$/i.test(file.name) || file.size > 10 * 1024 * 1024) throw new Error("Choose a PDF up to 10 MB");
       const encoded = await readFileAsDataUrl(file, 10 * 1024 * 1024, "Support-plan PDF");
       result = await cloudCall("iep-upload", { studentId: form.dataset.studentId, name: file.name, kind: formData.get("kind"), base64: encoded.split(",")[1] });
+    } else if (type === "hub-link-add") {
+      result = await cloudCall(type, { payload: {
+        title: formData.get("title"), url: formData.get("url"), audiences: formData.getAll("audiences")
+      } });
     } else if (["event-activity-add", "leader-task-add"].includes(type)) {
       const file = formData.get("attachment");
       const attachment = file?.size ? { attachmentName: file.name, attachmentData: await readFileAsDataUrl(file, 750_000, "Attachment") } : {};
@@ -507,6 +511,10 @@ function getRequiredRecordEditors() {
   );
 }
 
+function renderEditorChip(id, name) {
+  return `<span class="editor-chip">${escapeHtml(name)}<button type="button" data-action="remove-record-editor" data-teacher-id="${escapeHtml(id)}" aria-label="Remove ${escapeHtml(name)} from editing access">×</button></span>`;
+}
+
 function renderEditorAccessPicker({ selectedIds = [], authorId = activeTeacher?.id } = {}) {
   const requiredEditors = getRequiredRecordEditors();
   const optionalEditors = alphabeticStaff((state.teachers ?? TEACHERS).filter(teacher => teacher.id !== authorId && !getTeacherPermissions(teacher).canEditAllStudentRecords));
@@ -518,21 +526,30 @@ function renderEditorAccessPicker({ selectedIds = [], authorId = activeTeacher?.
     <div class="required-editor-list" aria-label="Editors who always have access">
       ${alwaysNames.map(teacher => `<span title="This access cannot be removed"><b aria-hidden="true">🔒</b>${escapeHtml(teacher.name)}<small>${teacher.id === authorId ? "Author" : TEACHER_ROLE_LABELS[teacher.role]}</small></span>`).join("")}
       ${!requiredEditors.some(teacher => teacher.role === "teacher-supervising") ? '<span class="is-policy"><b aria-hidden="true">🔒</b>Teacher supervising<small>Included when assigned</small></span>' : ""}
-      <span class="additional-editor-chips">${optionalEditors.filter(t => selected.has(t.id)).map(t => `<span>${escapeHtml(t.name)}</span>`).join("")}</span>
+      <span class="additional-editor-chips">${optionalEditors.filter(t => selected.has(t.id)).map(t => renderEditorChip(t.id, t.name)).join("")}</span>
       <button type="button" class="add-editor-button" data-action="open-editor-picker" aria-label="Add staff editors" aria-haspopup="dialog">+</button>
     </div>
     <dialog class="editor-picker-dialog" aria-labelledby="${dialogId}-title">
       <header><h2 id="${dialogId}-title">Add staff editors</h2><button type="button" class="dialog-close" data-action="close-editor-picker" aria-label="Close staff picker">×</button></header>
       <label class="editor-search-label">Search staff<input type="search" data-editor-search placeholder="Type a name" autocomplete="off" /></label>
-      <div class="optional-editor-grid">${optionalEditors.map(teacher => `<label><input type="checkbox" name="editorIds" value="${teacher.id}" ${selected.has(teacher.id) ? "checked" : ""} /><span><strong>${escapeHtml(teacher.name)}</strong><small>${TEACHER_ROLE_LABELS[teacher.role] ?? "Regular teacher"}</small></span></label>`).join("") || '<p>No additional staff accounts.</p>'}</div>
+      <div class="optional-editor-grid">${optionalEditors.map(teacher => `<label ${selected.has(teacher.id) ? "hidden" : ""}><input type="checkbox" name="editorIds" value="${escapeHtml(teacher.id)}" ${selected.has(teacher.id) ? "checked" : ""} /><span><strong>${escapeHtml(teacher.name)}</strong><small>${TEACHER_ROLE_LABELS[teacher.role] ?? "Regular teacher"}</small></span></label>`).join("")}<p data-editor-empty ${optionalEditors.some(teacher => !selected.has(teacher.id)) ? "hidden" : ""}>No available staff match.</p></div>
       <footer><button type="button" class="primary-button" data-action="close-editor-picker">Done</button></footer>
     </dialog>
   </div>`;
 }
 
-function refreshEditorChips(picker) {
-  const names = [...picker.querySelectorAll('[name="editorIds"]:checked')].map(input => input.closest("label").querySelector("strong").textContent);
-  picker.querySelector(".additional-editor-chips").innerHTML = names.map(name => `<span>${escapeHtml(name)}</span>`).join("");
+function refreshEditorPicker(picker) {
+  const query = picker.querySelector("[data-editor-search]").value.trim().toLowerCase();
+  const chips = [];
+  let hasMatches = false;
+  for (const row of picker.querySelectorAll(".optional-editor-grid > label")) {
+    const input = row.querySelector("input");
+    row.hidden = input.checked || !row.textContent.toLowerCase().includes(query);
+    if (input.checked) chips.push(renderEditorChip(input.value, row.querySelector("strong").textContent));
+    if (!row.hidden) hasMatches = true;
+  }
+  picker.querySelector(".additional-editor-chips").innerHTML = chips.join("");
+  picker.querySelector("[data-editor-empty]").hidden = hasMatches;
 }
 
 function renderRecordAccessSummary(record) {
@@ -1231,12 +1248,25 @@ function renderDashboardHub() {
     ? `<li><a class="hub-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(title)} (opens in a new tab)">${escapeHtml(title)} <span aria-hidden="true">↗</span></a></li>`
     : `<li><span class="hub-link hub-link-pending">${escapeHtml(title)} <small>Link pending</small></span></li>`;
   return `<section class="panel dashboard-hub" aria-labelledby="dashboard-hub-title">
-    <div class="panel-heading"><h2 id="dashboard-hub-title">Hub</h2></div>
+    <div class="panel-heading"><h2 id="dashboard-hub-title">Hub</h2>${cloudEnabled && activeUser.type === "teacher" ? '<button type="button" class="text-button" data-action="open-hub-link" aria-haspopup="dialog">+ Add link</button>' : ""}</div>
     <ul class="hub-links">${resources.filter(resource => !resource.group).map(resourceItem).join("")}</ul>
     ${meetingNotes.length ? `<div class="hub-meeting-notes">
       <h3>Grade-level meeting notes</h3>
       <ul class="hub-links hub-grade-links">${meetingNotes.map(resourceItem).join("")}</ul>
     </div>` : ""}
+    ${cloudEnabled && activeUser.type === "teacher" ? `<dialog id="hub-link-dialog" class="editor-picker-dialog" aria-labelledby="hub-link-title">
+      <header><h2 id="hub-link-title">Add a Hub link</h2><button type="button" class="dialog-close" data-action="close-hub-link" aria-label="Close add link">×</button></header>
+      <form class="hub-link-form" data-support-form="hub-link-add">
+        <label>Link title<input name="title" maxlength="100" required autofocus /></label>
+        <label>URL<input name="url" type="url" placeholder="https://" maxlength="2048" required /></label>
+        ${isSupervisor(activeUser) ? `<fieldset><legend>Share with</legend>
+          <label><input type="checkbox" name="audiences" value="teacher" /> All teachers</label>
+          <label><input type="checkbox" name="audiences" value="student" /> All students</label>
+          <small>Leave both unchecked to keep the link private.</small>
+        </fieldset>` : '<p class="field-help">Only you will see this link.</p>'}
+        <p class="support-error" role="alert"></p><button type="submit" class="primary-button">Save link</button>
+      </form>
+    </dialog>` : ""}
   </section>`;
 }
 
@@ -1655,9 +1685,9 @@ function renderRecordEditModal() {
       ${type === "behavior" ? `<label>Incident time<input name="incidentTime" type="time" value="${escapeHtml(record.incidentTime ?? "13:15")}" required /></label>` : ""}
     </div>
     ${type === "behavior" ? `<label>Location<input name="location" maxlength="160" value="${escapeHtml(record.location ?? "")}" required /></label>` : ""}
-    <label>Description<textarea name="description" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" required>${escapeHtml(record.description)}</textarea></label>
+    <label>${type === "behavior" ? "Describe what happened and what action you took immediately" : "Description"}<textarea name="description" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" required>${escapeHtml(record.description)}</textarea></label>
     ${type === "behavior" ? `
-      <label>Additional or different step taken<textarea name="customAction" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3">${escapeHtml(record.customAction ?? "")}</textarea></label>
+      ${record.customAction ? `<label>Additional action from the original record<textarea name="customAction" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3">${escapeHtml(record.customAction)}</textarea></label>` : ""}
       <label>Confidential teacher note<textarea name="confidentialNote" maxlength="${MAX_INTERNAL_NOTE_LENGTH}" rows="3">${escapeHtml(record.confidentialNote ?? "")}</textarea></label>
     ` : ""}
     ${type === "academic" ? `
@@ -1822,9 +1852,6 @@ function renderBehaviorConcern() {
           </div>
           <label class="full-field conditional-field" data-other-location hidden>Other location<input name="otherLocation" maxlength="160" disabled /></label>
 
-          <label class="full-field">Description<textarea name="description" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" required></textarea></label>
-
-
           ${renderConcernAttachmentFields()}
         </fieldset>
 
@@ -1836,8 +1863,8 @@ function renderBehaviorConcern() {
 
           </div>
           <h3 class="subsection-title">Teacher response suggestions</h3>
-          <div class="issue-options">${BEHAVIOR_RESPONSE_OPTIONS.map(action => issueChoice({ name: "teacherActions", value: action, title: action }, escapeHtml)).join("")}</div>
-          <label class="full-field"><span>Additional or different step taken immediately — <small>optional</small></span><textarea name="customAction" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3"></textarea></label>
+          <div class="issue-options behavior-response-options">${BEHAVIOR_RESPONSE_OPTIONS.map(action => issueChoice({ name: "teacherActions", value: action, title: action }, escapeHtml)).join("")}</div>
+          <label class="full-field">Describe what happened and what action you took immediately<textarea name="description" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" required></textarea></label>
           ${renderBehaviorDeductionField()}
         </fieldset>
 
@@ -2597,7 +2624,7 @@ function render() {
   const pushStatus = viewRoot.querySelector("[data-push-status]");
   if (pushStatus) pushStatus.textContent = phonePushStatus;
   if (cloudEnabled && ["behavior-concern", "academic-concern", "sel-concern"].includes(activeView)) {
-    viewRoot.querySelector(".editor-access-section")?.insertAdjacentHTML("beforeend", `<div class="followup-options"><h4>Notify staff for follow-up</h4><p>All supervising teachers and super admins are included automatically. Add other staff below.</p><details><summary>Additional recipients</summary>${state.teachers.filter(t => !isSupervisor({ ...t, type: "teacher" })).map(t => `<label class="checkbox-label"><input type="checkbox" name="notificationRecipientIds" value="${escapeHtml(t.id)}" />${escapeHtml(t.name)}</label>`).join("")}</details><label class="checkbox-label plan-request-toggle"><input type="checkbox" name="requestSmartGoal" /> Notify supervising staff: a SMART support plan may help this student</label></div>`);
+    viewRoot.querySelector(".editor-access-section")?.insertAdjacentHTML("beforeend", '<div class="followup-options"><label class="checkbox-label plan-request-toggle"><input type="checkbox" name="requestSmartGoal" /> Notify supervising staff: a SMART support plan may help this student</label></div>');
   }
 
   sortSelHistory();
@@ -2726,6 +2753,20 @@ document.addEventListener("click", async (event) => {
       break;
     }
     case "close-editor-picker":
+      actionTarget.closest("dialog").close();
+      break;
+    case "remove-record-editor": {
+      const picker = actionTarget.closest(".editor-access-picker");
+      const input = [...picker.querySelectorAll('[name="editorIds"]:checked')].find(item => item.value === actionTarget.dataset.teacherId);
+      if (input) input.checked = false;
+      refreshEditorPicker(picker);
+      picker.querySelector('[data-action="open-editor-picker"]').focus();
+      break;
+    }
+    case "open-hub-link":
+      document.querySelector("#hub-link-dialog")?.showModal();
+      break;
+    case "close-hub-link":
       actionTarget.closest("dialog").close();
       break;
     case "school-activity-prev": schoolActivityPage = Math.max(0, schoolActivityPage - 1); refreshSchoolActivity(); break;
@@ -2982,7 +3023,11 @@ viewRoot.addEventListener("change", (event) => {
     schoolActivityPage = 0; refreshSchoolActivity(); return;
   }
   if (event.target.matches("[data-activity-filter]")) { updateActivityFilter(event.target); return; }
-  if (event.target.matches('[name="editorIds"]')) refreshEditorChips(event.target.closest(".editor-access-picker"));
+  if (event.target.matches('[name="editorIds"]')) {
+    const picker = event.target.closest(".editor-access-picker");
+    refreshEditorPicker(picker);
+    picker.querySelector("[data-editor-search]").focus();
+  }
   if (event.target.matches('#custom-calendar-event-form [name="scope"]')) { syncCalendarCreationScope(); return; }
   if (event.target.matches("#calendar-go-to-date") && event.target.value) {
     calendarWeekStart = startOfCalendarWeek(event.target.value);
@@ -3062,8 +3107,7 @@ viewRoot.addEventListener("change", (event) => {
 viewRoot.addEventListener("input", (event) => {
   if (event.target.matches("[data-activity-filter]")) { updateActivityFilter(event.target); return; }
   if (event.target.matches("[data-editor-search]")) {
-    const query = event.target.value.trim().toLowerCase();
-    event.target.closest("dialog").querySelectorAll(".optional-editor-grid > label").forEach(label => label.hidden = !label.textContent.toLowerCase().includes(query));
+    refreshEditorPicker(event.target.closest(".editor-access-picker"));
     return;
   }
   if (event.target.matches("[data-student-search]")) {
@@ -3320,7 +3364,6 @@ viewRoot.addEventListener("submit", async (event) => {
         teacherActions: formData.getAll("teacherActions"),
         strategies: formData.getAll("strategies"),
         otherStrategy: formData.get("otherStrategy"),
-        customAction: formData.get("customAction"),
         deductionValueIds: formData.getAll("deductionValueIds"),
         deductionPoints: formData.get("deductionPoints"),
         confidentialNote: formData.get("confidentialNote"),

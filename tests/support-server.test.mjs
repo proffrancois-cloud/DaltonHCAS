@@ -106,3 +106,23 @@ test("dashboard Hub returns only the resources authorized for the signed-in acco
   assert.equal(resourcesFor("francois").some(r => r.title === "HoD meeting notes"), false);
   assert.doesNotMatch(JSON.stringify(resourcesFor("david")), /audience|accountIds/);
 });
+
+test("Hub links are private by default and only supervisors may publish to selected school audiences", () => {
+  let state = createInitialState();
+  state.teachers.push({ id: "supervisor", name: "Supervising Teacher", role: "teacher-supervising" });
+  const add = (actor, payload) => {
+    state = applySchoolCommand(state, actorForAccount(state, actor), "hub-link-add", { url: "https://example.com/", ...payload });
+  };
+  const titles = id => visibleState(state, actorForAccount(state, id)).hubResources.map(resource => resource.title);
+  add("david", { title: "Private teaching link", ownerId: "random1" });
+  assert.throws(() => add("david", { title: "Unauthorized", audiences: ["student"] }), /Only supervising teachers/);
+  assert.throws(() => add("random1", { title: "Student link" }), /restricted to staff/i);
+  assert.throws(() => add("francois", { title: "Unsafe URL", url: "javascript:alert(1)" }), /HTTPS/);
+  add("supervisor", { title: "Student resource", audiences: ["student"] });
+  add("francois", { title: "Staff resource", audiences: ["teacher"] });
+  add("francois", { title: "Shared resource", audiences: ["teacher", "student"] });
+  assert.deepEqual(titles("david"), ["Private teaching link", "Staff resource", "Shared resource"]);
+  assert.deepEqual(titles("supervisor"), ["Student resource", "Staff resource", "Shared resource"]);
+  assert.deepEqual(titles("random1"), ["Student resource", "Shared resource"]);
+  assert.doesNotMatch(JSON.stringify(visibleState(state, actorForAccount(state, "david")).hubResources), /ownerId|audience/);
+});

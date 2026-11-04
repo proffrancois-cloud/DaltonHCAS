@@ -27,7 +27,8 @@ export function synchronizeAlerts(state, today) {
 export function visibleState(state, actor) {
   const { hubResources: resourceCatalog = [], ...staffState } = state;
   const hubResources = resourceCatalog
-    .filter(({ audience, accountIds }) => audience === "all" || audience === actor.type ||
+    .filter(({ audience, accountIds, ownerId }) => audience === "all" || audience === actor.type ||
+      (actor.type === "teacher" && ownerId === actor.id) ||
       (audience === "hod" && actor.type === "teacher" && accountIds?.includes(actor.id)))
     .map(({ title, url, group }) => ({ title, url, group }));
   const notifications = (state.notifications ?? []).filter(item => item.recipientIds.includes(actor.id))
@@ -139,7 +140,7 @@ function confirmTrustedAdult(state, actor, requestId, iso) {
 
 function applyCommand(state, actor, action, p, now) {
   const iso = new Date(now).toISOString();
-  const teacherActions = new Set(["award-add", "award-update", "award-remove", "concern-add", "concern-update"]);
+  const teacherActions = new Set(["award-add", "award-update", "award-remove", "concern-add", "concern-update", "hub-link-add"]);
   if (teacherActions.has(action)) teacherOnly(actor);
   switch (action) {
     case "award-add": return data.addAward(state, p.studentId, p.valueId, actor.id, Number(p.points), now, p.comment ?? "", p.editorIds ?? []);
@@ -151,10 +152,27 @@ function applyCommand(state, actor, action, p, now) {
       validateConcernTier(p.type, p.input);
       const next = fn(state, { ...p.input, teacherId: actor.id }, now);
       next[`${p.type}Concerns`].at(-1).requestSmartGoal = Boolean(p.input.requestSmartGoal);
-      next[`${p.type}Concerns`].at(-1).notificationRecipientIds = [...new Set([...followup.supervisors(state), ...(p.input.notificationRecipientIds ?? [])])].filter(id => state.teachers.some(t => t.id === id));
+      next[`${p.type}Concerns`].at(-1).notificationRecipientIds = followup.supervisors(state);
       return next;
     }
     case "concern-update": return data.updateConcern(state, p.type, p.id, actor.id, p.changes, now);
+    case "hub-link-add": {
+      const title = String(p.title ?? "").trim();
+      const rawUrl = String(p.url ?? "").trim();
+      if (!title || title.length > 100) throw new Error("Enter a link title of up to 100 characters");
+      if (rawUrl.length > 2048) throw new Error("Use an HTTPS link of up to 2,048 characters");
+      const url = URL.canParse(rawUrl) ? new URL(rawUrl) : null;
+      if (url?.protocol !== "https:" || url.username || url.password) throw new Error("Enter a valid HTTPS link");
+      const audiences = p.audiences ?? [];
+      if (!Array.isArray(audiences) || audiences.some(audience => !["teacher", "student"].includes(audience))) {
+        throw new Error("Choose a valid Hub audience");
+      }
+      if (audiences.length && !support.isSupervisor(actor)) throw new Error("Only supervising teachers and super admins can publish shared Hub links");
+      const selected = [...new Set(audiences)];
+      const audience = selected.length === 2 ? "all" : selected[0] ?? "personal";
+      const resource = { title, url: url.href, audience, ownerId: actor.id };
+      return { ...state, hubResources: [...(state.hubResources ?? []), resource] };
+    }
     case "check-in": return data.addSelCheckIn(state, actor, p, now);
     case "support-plan-save": {
       if (!support.isSupervisor(actor)) throw new Error("Only supervising teachers and super admins can edit support information");
