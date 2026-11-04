@@ -114,7 +114,10 @@ test("external school ranges span both months, and internal events are staff-onl
   const { state, id } = fixture();
   const student = studentUser(state, id);
   const teacher = { type: "teacher", id: "mentor" };
-  state.schoolCalendarEvents = [{ id: "internal-test", title: "Internal test event", date: "2027-02-01" }];
+  state.schoolCalendarEvents = [
+    { id: "internal-july", title: "Internal July event", date: "2026-07-20" },
+    { id: "internal-test", title: "Internal test event", date: "2027-02-01" }
+  ];
   const range = { startDate: "2027-01-31", endDate: "2027-02-01" };
   const staffEvents = getCalendarEvents(state, { user: teacher, ...range, teacherGrade: "my" });
   assert.ok(staffEvents.some(event => event.title === "Internal test event"));
@@ -125,5 +128,11 @@ test("external school ranges span both months, and internal events are staff-onl
   assert.deepEqual(conference.map(event => event.date), ["2027-01-31", "2027-02-01"]);
   assert.equal(conference[0].rangeStart, "2027-01-23");
   assert.equal(visibleState(state, student).schoolCalendarEvents, undefined);
-  assert.ok(getCalendarEvents(state, { user: student }).some(event => event.title === "Dragon Boat Festival"));
+  assert.ok(getCalendarEvents(state, { user: teacher }).some(event => event.id.startsWith("internal-july::")));
+  const studentYear = getCalendarEvents(state, { user: student });
+  assert.ok(studentYear.some(event => event.title === "Dragon Boat Festival"));
+  assert.ok(studentYear.some(event => event.title === "LAB Fair and LAB Selection" && event.date === "2026-08-12"));
+  assert.ok(studentYear.some(event => event.title === "Winter Break" && event.date === "2027-01-01"));
+  assert.deepEqual(studentYear.filter(event => event.title.startsWith("Final Exam Week")).map(event => event.date),
+    ["2026-12-10", "2026-12-14", "2026-12-15", "2026-12-16", "2026-12-17"]);
 });

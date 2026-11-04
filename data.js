@@ -1365,7 +1365,7 @@ function schoolCalendarDays(entries, startDate, endDate, grade) {
 
 export function getCalendarEvents(
   state,
-  { user, startDate = "2026-08-01", endDate = "2027-06-30", teacherGrade = "all" } = {}
+  { user, startDate = "2026-07-01", endDate = "2027-06-30", teacherGrade = "all" } = {}
 ) {
   const teacher = resolveTeacher(state, user);
   const personal = Boolean(teacher && teacherGrade === "my");
