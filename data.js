@@ -15,7 +15,7 @@ import {
   TIER_ONE_INSTRUCTIONAL_STRATEGIES,
   TIER_TWO_ACADEMIC_INTERVENTIONS
 } from "./concerns-data.js";
-import { OFFICIAL_CALENDAR_EVENTS } from "./calendar-data.js";
+import { EXTERNAL_SCHOOL_CALENDAR, OFFICIAL_CALENDAR_EVENTS } from "./calendar-data.js";
 
 export {
   ACADEMIC_CONCERN_EXAMPLES,
@@ -555,6 +555,29 @@ export function removeAward(state, awardId, teacherId) {
   };
 }
 
+function recordRevision(state, before, after, teacherId, now) {
+  const changes = Object.keys(after).flatMap(field => {
+    const oldValue = Object.hasOwn(before, field) ? before[field] : null;
+    if (!Object.hasOwn(before, field) && (after[field] === "" || Array.isArray(after[field]) && !after[field].length)) return [];
+    return JSON.stringify(oldValue) === JSON.stringify(after[field])
+      ? [] : [{ field, before: oldValue, after: after[field] }];
+  });
+  if (!changes.length) return before;
+  const updatedAt = new Date(now).toISOString();
+  return {
+    ...after, updatedAt, updatedBy: teacherId,
+    editHistory: [...(before.editHistory ?? []), {
+      editedAt: updatedAt, teacherId, teacherName: state.teachers.find(teacher => teacher.id === teacherId)?.name, changes
+    }]
+  };
+}
+
+function checkRecordVersion(record, changes) {
+  if (changes.expectedVersion !== undefined && changes.expectedVersion !== (record.editHistory?.length ?? 0)) {
+    throw new Error("This record changed while you were editing. Refresh the page before editing again.");
+  }
+}
+
 export function updateAward(state, awardId, teacherId, changes, now = Date.now()) {
   validateTeacher(state, teacherId);
   const award = state.awards.find((item) => item.id === awardId);
@@ -565,26 +588,15 @@ export function updateAward(state, awardId, teacherId, changes, now = Date.now()
   if (award.sourceType === "behavior-concern") {
     throw new Error("Edit this deduction from its linked behavior concern");
   }
+  checkRecordVersion(award, changes);
   const valueId = String(changes.valueId ?? award.valueId);
   const points = Number(changes.points ?? award.points);
   const comment = normalizeText(changes.comment ?? award.comment, MAX_COMMENT_LENGTH);
   if (!VALUES.some((value) => value.id === valueId)) throw new Error("Unknown HCAS value");
   if (!POINT_OPTIONS.includes(points)) throw new Error("Invalid point amount");
-  return {
-    ...state,
-    awards: state.awards.map((item) =>
-      item.id === awardId
-        ? {
-            ...item,
-            valueId,
-            points,
-            comment,
-            editorIds: [],
-            updatedAt: new Date(now).toISOString(),
-            updatedBy: teacherId
-          }
-        : item
-    )
+  const updated = recordRevision(state, award, { ...award, valueId, points, comment, editorIds: [] }, teacherId, now);
+  return updated === award ? state : {
+    ...state, awards: state.awards.map(item => item.id === awardId ? updated : item)
   };
 }
 
@@ -837,14 +849,10 @@ export function updateConcern(state, type, concernId, teacherId, changes, now = 
   if (!canEditStudentRecord(state, teacherId, concern)) {
     throw new Error("You do not have permission to edit this concern");
   }
+  checkRecordVersion(concern, changes);
 
   const updated = {
     ...concern,
-    title: normalizeRequiredText(
-      concernTitle(type, concern) || concern.title,
-      MAX_CONCERN_TITLE_LENGTH,
-      "Concern title"
-    ),
     description: normalizeRequiredText(
       changes.description ?? concern.description,
       MAX_CONCERN_DESCRIPTION_LENGTH,
@@ -855,9 +863,7 @@ export function updateConcern(state, type, concernId, teacherId, changes, now = 
       state,
       changes.editorIds ?? concern.editorIds,
       concern.teacherId
-    ),
-    updatedAt: new Date(now).toISOString(),
-    updatedBy: teacherId
+    )
   };
 
   if (type === "behavior") {
@@ -897,10 +903,12 @@ export function updateConcern(state, type, concernId, teacherId, changes, now = 
     );
   }
 
+  const revised = recordRevision(state, concern, updated, teacherId, now);
+  if (revised === concern) return state;
   const nextState = {
     ...state,
     [collectionName]: state[collectionName].map((item) =>
-      item.id === concernId ? updated : item
+      item.id === concernId ? revised : item
     )
   };
   if (type !== "behavior") return nextState;
@@ -908,7 +916,7 @@ export function updateConcern(state, type, concernId, teacherId, changes, now = 
     ...nextState,
     awards: state.awards.map((award) =>
       award.sourceConcernId === concernId
-        ? { ...award, editorIds: updated.editorIds, updatedAt: updated.updatedAt, updatedBy: teacherId }
+        ? { ...award, editorIds: revised.editorIds, updatedAt: revised.updatedAt, updatedBy: teacherId }
         : award
     )
   };
@@ -1256,7 +1264,7 @@ export function addCustomCalendarEvent(
 }
 
 export function canEditCalendarEvent(state, user, event) {
-  if (!user || !event) return false;
+  if (!user || !event || event.schoolCalendar) return false;
   if (user.type === "teacher") {
     const teacher = resolveTeacher(state, user);
     if (!teacher) return false;
@@ -1340,37 +1348,70 @@ function labAppliesOn(lab, date) {
   return (!lab.startDate || date >= lab.startDate) && (!lab.endDate || date <= lab.endDate);
 }
 
+function schoolCalendarDays(entries, startDate, endDate, grade) {
+  const events = [];
+  for (const entry of entries) {
+    if (grade && entry.grades?.length && !entry.grades.includes(grade)) continue;
+    const day = new Date(`${entry.date > startDate ? entry.date : startDate}T00:00:00Z`);
+    const lastDay = entry.endDate ?? entry.date;
+    while (day.toISOString().slice(0, 10) <= lastDay && day.toISOString().slice(0, 10) <= endDate) {
+      const date = day.toISOString().slice(0, 10);
+      events.push({ type: "school", ...entry, id: `${entry.id}::${date}`, date, rangeStart: entry.date, schoolCalendar: true });
+      day.setUTCDate(day.getUTCDate() + 1);
+    }
+  }
+  return events;
+}
+
 export function getCalendarEvents(
   state,
-  { user, startDate = "2026-08-01", endDate = "2027-06-01", teacherGrade = "all" } = {}
+  { user, startDate = "2026-08-01", endDate = "2027-06-30", teacherGrade = "all" } = {}
 ) {
-  const baseEvents = [...OFFICIAL_CALENDAR_EVENTS, ...(state.customCalendarEvents ?? [])].filter(
-    (event) => event.date >= startDate && event.date <= endDate
-  );
+  const teacher = resolveTeacher(state, user);
+  const personal = Boolean(teacher && teacherGrade === "my");
+  const selectedGrade = Number(teacherGrade);
+  const assignments = state.leadershipAssignments ?? {};
+  const teacherHouseIds = personal ? [
+    teacher.houseId,
+    ...Object.keys(assignments.houseTeacherIds ?? {}).filter(id => assignments.houseTeacherIds[id].includes(teacher.id))
+  ] : [];
+  const assignedGrades = personal ? getTeacherLevelUpGrades(state, teacher.id) : [];
   const student = user?.type === "student"
     ? state.students.find((item) => item.id === user.studentId)
     : null;
+  const schoolEvents = schoolCalendarDays(student ? EXTERNAL_SCHOOL_CALENDAR : teacher ? state.schoolCalendarEvents ?? [] : [],
+    startDate, endDate, student?.grade ?? selectedGrade);
+  const closures = new Set(schoolEvents.filter(event => event.type === "closure").map(event => event.date));
+  const baseEvents = [...OFFICIAL_CALENDAR_EVENTS, ...(state.customCalendarEvents ?? [])].filter(
+    (event) => event.date >= startDate && event.date <= endDate
+  );
   const result = [];
 
   for (const baseEvent of baseEvents) {
+    if (closures.has(baseEvent.date) && OFFICIAL_CALENDAR_EVENTS.includes(baseEvent)) continue;
+    if (personal && baseEvent.teacherIds?.length && !baseEvent.teacherIds.includes(teacher.id)) continue;
     const regularLab = isRegularLabSlot(baseEvent);
     const slotWeekday = /^Monday Labs$/i.test(baseEvent.title) ? 1 : /^Wednesday Labs$/i.test(baseEvent.title) ? 3 : /^Thursday Labs$/i.test(baseEvent.title) ? 4 : getDateWeekday(baseEvent.date);
     const labs = regularLab ? (state.leadershipAssignments?.labs ?? []).filter(lab => lab.weekday === slotWeekday && labAppliesOn(lab, baseEvent.date)) : [];
     const assignedLabs = student ? labs.filter(lab => isStudentInLab(lab, student.id)) : labs;
-    if (user?.type === "teacher" && teacherGrade !== "all" && baseEvent.grades?.length && !baseEvent.grades.includes(Number(teacherGrade)) && !labs.some(l => l.leaderIds.some(id => state.students.some(s => s.id === id && s.grade === Number(teacherGrade))))) continue;
+    if (teacher && selectedGrade && baseEvent.grades?.length && !baseEvent.grades.includes(selectedGrade) && !labs.some(l => l.leaderIds.some(id => state.students.some(s => s.id === id && s.grade === selectedGrade)))) continue;
     if (student && baseEvent.grades?.length && !baseEvent.grades.includes(student.grade) && !assignedLabs.length && !(baseEvent.labId && isStudentInLab((state.leadershipAssignments?.labs ?? []).find(l => l.id === baseEvent.labId) ?? {}, student.id))) continue;
     if (student && baseEvent.houseIds?.length && !baseEvent.houseIds.includes(student.houseId)) continue;
 
     const levelUp = baseEvent.type === "level-up" || (baseEvent.source === "2026–27 Dalton Lab Calendar (G6–12)" && getDateWeekday(baseEvent.date) === 2 && baseEvent.type === "school" && baseEvent.grades?.length < 7 && !/college counselling|mastery/i.test(baseEvent.title));
-    if (levelUp && state.leadershipAssignments?.levelUpTeachers) {
-      const grades = (student ? [student.grade] : baseEvent.grades?.length ? baseEvent.grades : [6,7,8,9,10,11,12]).filter(grade=>teacherGrade === "all" || grade === Number(teacherGrade));
-      for (const grade of grades) result.push(mergeCalendarDetails(state, { ...baseEvent, id:`${baseEvent.id}::level-up-g${grade}`, parentId:baseEvent.id, type:"level-up", program:"level-up", levelUpGrade:grade, grades:[grade], teacherIds:state.leadershipAssignments.levelUpTeachers[grade] ?? [] }));
+    if (levelUp && (assignments.levelUpTeachers || personal)) {
+      const grades = student ? [student.grade] : baseEvent.grades?.length ? baseEvent.grades : [6, 7, 8, 9, 10, 11, 12];
+      for (const grade of grades) {
+        if ((personal && !assignedGrades.includes(grade)) || (selectedGrade && grade !== selectedGrade)) continue;
+        result.push(mergeCalendarDetails(state, { ...baseEvent, id:`${baseEvent.id}::level-up-g${grade}`, parentId:baseEvent.id, type:"level-up", program:"level-up", levelUpGrade:grade, grades:[grade], teacherIds:assignments.levelUpTeachers?.[grade] ?? [] }));
+      }
       continue;
     }
 
     if (baseEvent.type === "house") {
       const houses = student ? [student.houseId] : baseEvent.houseIds?.length ? baseEvent.houseIds : HOUSES.map((house) => house.id);
       houses.forEach((houseId) => {
+        if (personal && !teacherHouseIds.includes(houseId)) return;
         const house = HOUSES.find((item) => item.id === houseId);
         const embeddedLocation = baseEvent.title.includes(" · ") ? baseEvent.title.split(" · ").at(-1) : "";
         const event = { ...baseEvent, id: `${baseEvent.id}::${houseId}`, houseId, location: baseEvent.location || embeddedLocation || state.houseMeetingLocations?.[houseId] || "", title: `${baseEvent.title} · ${house.name}` };
@@ -1383,11 +1424,13 @@ export function getCalendarEvents(
       if (baseEvent.labId) {
         const lab = (state.leadershipAssignments?.labs ?? []).find(l => l.id === baseEvent.labId);
         if (student && !isStudentInLab(lab ?? {}, student.id)) continue;
+        if (personal && !lab?.teacherIds?.includes(teacher.id)) continue;
         result.push(mergeCalendarDetails(state, baseEvent));
         continue;
       }
       if (regularLab && labs.length && (user?.type === "teacher" || student)) {
-        const visibleLabs = assignedLabs.filter(lab => student || teacherGrade === "all" || lab.grades.includes(Number(teacherGrade)) || lab.leaderIds.some(id => state.students.some(s => s.id === id && s.grade === Number(teacherGrade))));
+        const visibleLabs = assignedLabs.filter(lab => personal ? lab.teacherIds?.includes(teacher.id)
+          : student || !selectedGrade || lab.grades.includes(selectedGrade) || lab.leaderIds.some(id => state.students.some(s => s.id === id && s.grade === selectedGrade)));
         visibleLabs.forEach((lab) => {
           const event = {
             ...baseEvent,
@@ -1405,6 +1448,7 @@ export function getCalendarEvents(
         });
         if (visibleLabs.length) continue;
       }
+      if (personal && regularLab) continue;
     }
 
     result.push(mergeCalendarDetails(state, baseEvent));
@@ -1413,15 +1457,17 @@ export function getCalendarEvents(
   const meeting = state.leadershipAssignments?.captainsMeeting;
   if (meeting) {
     const captainIds = [...new Set(Object.values(state.leadershipAssignments.houseLeaders ?? {}).flat())];
-    const dates = [...new Set(baseEvents.filter(e => isRegularLabSlot(e) && getDateWeekday(e.date) === meeting.weekday && labAppliesOn(meeting, e.date)).map(e => e.date))];
-    if (!student || captainIds.includes(student.id)) for (const date of dates) result.push(mergeCalendarDetails(state, {
+    const dates = [...new Set(baseEvents.filter(e => !closures.has(e.date) && isRegularLabSlot(e) && getDateWeekday(e.date) === meeting.weekday && labAppliesOn(meeting, e.date)).map(e => e.date))];
+    if (student ? captainIds.includes(student.id) : !personal || meeting.teacherIds.includes(teacher.id)) for (const date of dates) result.push(mergeCalendarDetails(state, {
       id: `${meeting.id}::${date}`, meetingId: meeting.id, date, type: "school", title: meeting.title,
       location: meeting.location, teacherIds: meeting.teacherIds, leaderIds: captainIds,
       description: "Weekly meeting for House Captains and the staff responsible for Houses.", source: "S1 LAB LIST 2026–2027"
     }));
   }
 
-  return result.sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
+  const existing = new Set(result.map(event => `${event.date}:${event.title.toLowerCase()}`));
+  return [...result, ...schoolEvents.filter(event => !existing.has(`${event.date}:${event.title.toLowerCase()}`))]
+    .sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
 }
 
 export function isValidStoredState(state) {

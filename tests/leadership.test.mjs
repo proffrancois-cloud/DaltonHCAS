@@ -96,3 +96,34 @@ test("Level-Up events identify the grade's teachers and isolate editing to that 
   state.calendarEventDetails[own.parentId]={description:"Existing shared instructions"};
   assert.equal(getCalendarEvents(state,{user:teacher,startDate:own.date,endDate:own.date}).find(e=>e.id===own.id).description,"Existing shared instructions");
 });
+
+test("My assignments shows a staff member's House and LAB; the full calendar remains available", () => {
+  const { state } = fixture();
+  state.leadershipAssignments.labs[1].teacherIds = ["david"];
+  const user = { type: "teacher", id: "mentor" };
+  const options = { user, startDate: "2026-11-02", endDate: "2026-11-15" };
+  const own = getCalendarEvents(state, { ...options, teacherGrade: "my" });
+  assert.ok(own.some(event => event.labId === "known-lab"));
+  assert.ok(own.some(event => event.houseId === "red-phoenix"));
+  assert.ok(own.some(event => event.meetingId === "captain-meeting"));
+  assert.equal(own.some(event => event.labId === "other-lab" || event.houseId && event.houseId !== "red-phoenix"), false);
+  assert.ok(getCalendarEvents(state, options).some(event => event.labId === "other-lab"));
+});
+
+test("external school ranges span both months, and internal events are staff-only", () => {
+  const { state, id } = fixture();
+  const student = studentUser(state, id);
+  const teacher = { type: "teacher", id: "mentor" };
+  state.schoolCalendarEvents = [{ id: "internal-test", title: "Internal test event", date: "2027-02-01" }];
+  const range = { startDate: "2027-01-31", endDate: "2027-02-01" };
+  const staffEvents = getCalendarEvents(state, { user: teacher, ...range, teacherGrade: "my" });
+  assert.ok(staffEvents.some(event => event.title === "Internal test event"));
+  assert.equal(canEditCalendarEvent(state, { type: "teacher", id: "francois" }, staffEvents.find(event => event.schoolCalendar)), false);
+  const studentEvents = getCalendarEvents(state, { user: student, ...range });
+  assert.ok(studentEvents.every(event => event.title !== "Internal test event"));
+  const conference = studentEvents.filter(event => event.title.includes("THIMUN"));
+  assert.deepEqual(conference.map(event => event.date), ["2027-01-31", "2027-02-01"]);
+  assert.equal(conference[0].rangeStart, "2027-01-23");
+  assert.equal(visibleState(state, student).schoolCalendarEvents, undefined);
+  assert.ok(getCalendarEvents(state, { user: student }).some(event => event.title === "Dragon Boat Festival"));
+});

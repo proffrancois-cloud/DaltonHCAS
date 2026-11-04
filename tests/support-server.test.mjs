@@ -40,3 +40,50 @@ test("repeat-concern alerts remain persisted and individual read receipts surviv
   assert.equal(state.notifications.length, 1);
   assert.ok(state.notifications[0].readBy.francois);
 });
+
+test("staff edit history preserves exact changes and rejects stale edits; students receive current values only", () => {
+  let state = createInitialState();
+  const now = Date.parse("2026-11-04T02:30:00Z");
+  const command = (actorId, action, payload) => {
+    state = applySchoolCommand(state, actorForAccount(state, actorId), action, payload, now);
+  };
+  command("david", "award-add", { studentId: "random1", valueId: "community", points: 20, comment: "Earlier comment" });
+  const awardId = state.awards.at(-1).id;
+  command("francois", "award-update", { id: awardId, changes: { expectedVersion: 0, points: 30, comment: "Latest comment" } });
+  const revised = state.awards.at(-1);
+  assert.deepEqual(revised.editHistory, [{
+    teacherId: "francois",
+    teacherName: actorForAccount(state, "francois").name,
+    editedAt: new Date(now).toISOString(),
+    changes: [
+      { field: "points", before: 20, after: 30 },
+      { field: "comment", before: "Earlier comment", after: "Latest comment" }
+    ]
+  }]);
+  assert.throws(() => command("david", "award-update", { id: awardId, changes: { expectedVersion: 0, points: 40 } }), /changed while/);
+  command("david", "award-update", { id: awardId, changes: { expectedVersion: 1, points: 30 } });
+  assert.equal(state.awards.at(-1), revised);
+
+  const input = {
+    studentIds: ["random1"], tier: 1, issueIds: ["other"], otherIssue: "Learning issue",
+    concernIds: ["other"], description: "Original observation", incidentDate: "2026-11-04", actionDetails: "Contacted teacher"
+  };
+  for (const type of ["behavior", "academic", "sel"]) {
+    command("david", "concern-add", { type, input: type === "behavior"
+      ? { ...input, issueIds: ["classroom-misconduct"], incidentTime: "13:15", location: "Classroom", confidentialNote: "Old private note" } : input });
+    const record = state[`${type}Concerns`].at(-1);
+    command("francois", "concern-update", { type, id: record.id, changes: {
+      description: "Revised observation",
+      ...(type === "behavior" ? { confidentialNote: "New private note" } : {})
+    } });
+    const staffRecord = visibleState(state, actorForAccount(state, "david"))[`${type}Concerns`].at(-1);
+    assert.equal(staffRecord.editHistory[0].teacherId, "francois");
+    assert.deepEqual(staffRecord.editHistory[0].changes[0], { field: "description", before: "Original observation", after: "Revised observation" });
+  }
+  const student = visibleState(state, actorForAccount(state, "random1"));
+  assert.equal(student.awards.at(-1).comment, "Latest comment");
+  assert.equal(student.notifications.find(item => item.awardId === awardId).points, 30);
+  assert.equal(student.behaviorConcerns.at(-1).description, "Revised observation");
+  assert.equal(student.academicConcerns.length + student.selConcerns.length, 0);
+  assert.doesNotMatch(JSON.stringify(student), /editHistory|Earlier comment|Original observation|private note/);
+});

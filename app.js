@@ -153,7 +153,7 @@ const concernStudentFilters = {
   "sel-concern": emptyStudentFilters()
 };
 let calendarWeekStart = getInitialCalendarWeek();
-let calendarTeacherGrade = "";
+let calendarTeacherGrade = "my";
 let selectedCalendarEventId = null;
 let calendarCreateOpen = false;
 let selCheckInOpen = false;
@@ -626,7 +626,7 @@ function resetRosterFilters(context) {
   if (context === "students") { studentQuery = ""; houseFilter = []; studentGradeFilter = []; studentValueFilters = []; studentDateFrom = studentDateTo = ""; profileStudentId = null; profileCoinFilter = "all"; }
   else if (context === "send") { sendStudentQuery = sendHouseFilter = sendGradeFilter = ""; }
   else if (concernStudentFilters[context]) concernStudentFilters[context] = emptyStudentFilters();
-  else if (context === "dashboard") { calendarTeacherGrade = ""; selectedCalendarEventId = null; }
+  else if (context === "dashboard") { calendarTeacherGrade = "my"; selectedCalendarEventId = null; }
 }
 
 function renderCrestVisual(student, points = getStudentTotal(state, student.id)) {
@@ -755,8 +755,9 @@ function formatRelativeTime(dateString) {
   return `${Math.floor(elapsedHours / 24)}d ago`;
 }
 
-function formatDateTime(dateString) {
+function formatDateTime(dateString, includeYear = false) {
   return new Intl.DateTimeFormat("en", {
+    ...(includeYear ? { year: "numeric" } : {}),
     month: "short",
     day: "numeric",
     hour: "numeric",
@@ -805,7 +806,7 @@ function startOfCalendarWeek(dateKey) {
 
 function getInitialCalendarWeek() {
   const today = getTodayInputValue();
-  const schoolDate = today < "2026-08-03" || today > "2027-05-31" ? "2026-11-02" : today;
+  const schoolDate = today < "2026-08-03" || today > "2027-06-30" ? "2026-11-02" : today;
   return startOfCalendarWeek(schoolDate);
 }
 
@@ -832,8 +833,7 @@ function getAccountRoleLabel() {
   return isCaptain || isLabLeader ? "House Captain/Lab Leader" : "Student";
 }
 
-function getVisibleCalendarEvents(startDate = "2026-08-01", endDate = "2027-06-01") {
-  if (activeUser?.type === "teacher" && !calendarTeacherGrade) return [];
+function getVisibleCalendarEvents(startDate, endDate) {
   return getCalendarEvents(state, {
     user: activeUser,
     startDate,
@@ -852,6 +852,9 @@ function renderCalendarEventPanel(events) {
   if (!event) return "";
   const editable = canEditCalendarEvent(state, activeUser, event);
   const resourceUrl = /^https?:\/\//i.test(event.resourceUrl ?? "") ? event.resourceUrl : "";
+  const dateLabel = event.endDate
+    ? `${formatDateOnly(event.rangeStart)} – ${formatDateOnly(event.endDate)}`
+    : formatDateOnly(event.date);
   return `
     <div class="modal-backdrop" data-action="close-calendar-event">
       <section class="modal-panel calendar-event-panel" role="dialog" aria-modal="true" aria-labelledby="calendar-event-panel-title" tabindex="-1" data-modal-panel>
@@ -860,7 +863,7 @@ function renderCalendarEventPanel(events) {
           <span class="calendar-type-badge is-${event.type}">${getCalendarTypeLabel(event.type)}</span>
           <div>
             <h3 id="calendar-event-panel-title">${escapeHtml(event.title)}</h3>
-            <p>${formatDateOnly(event.date)} · ${formatClockTime(event.startTime)}–${formatClockTime(event.endTime)}${event.location ? ` · ${escapeHtml(event.location)}` : ""}</p>
+            <p>${dateLabel}${event.startTime && event.endTime ? ` · ${formatClockTime(event.startTime)}–${formatClockTime(event.endTime)}` : ""}${event.location ? ` · ${escapeHtml(event.location)}` : ""}</p>
           </div>
         </div>
         ${event.teacherIds?.length ? `<p><strong>Teachers:</strong> ${event.teacherIds.map(id => escapeHtml(getTeacher(id)?.name ?? "")).filter(Boolean).join(", ")}</p>` : ""}
@@ -1085,23 +1088,24 @@ function renderSchoolCalendar() {
     <section class="calendar-section" aria-labelledby="school-calendar-title">
       <div class="calendar-heading">
         <div>
-          <h2 id="school-calendar-title">${getActiveStudent() ? "My calendar" : "School calendar"}</h2>
+          <h2 id="school-calendar-title">My calendar</h2>
         </div>
         ${canOpenCalendarEventCreator() ? '<button class="calendar-create-trigger" type="button" data-action="open-calendar-create"><span aria-hidden="true">＋</span>Create event</button>' : ""}
         <div class="calendar-toolbar">
-          ${activeUser.type === "teacher" ? `<label><span class="sr-only">Calendar grade</span><select id="calendar-grade-filter"><option value="">Choose grade</option><option value="all" ${calendarTeacherGrade === "all" ? "selected" : ""}>All grades</option>${[6, 7, 8, 9, 10, 11, 12].map((grade) => `<option value="${grade}" ${calendarTeacherGrade === String(grade) ? "selected" : ""}>Grade ${grade}</option>`).join("")}</select></label>` : ""}
+          ${activeUser.type === "teacher" ? `<label><span class="sr-only">Calendar view</span><select id="calendar-grade-filter"><option value="my">My assignments</option><option value="all" ${calendarTeacherGrade === "all" ? "selected" : ""}>All grades</option>${[6, 7, 8, 9, 10, 11, 12].map((grade) => `<option value="${grade}" ${calendarTeacherGrade === String(grade) ? "selected" : ""}>Grade ${grade}</option>`).join("")}</select></label>` : ""}
+          <label><span class="sr-only">Go to date</span><input id="calendar-go-to-date" type="date" value="${calendarWeekStart}" /></label>
           <div class="calendar-week-controls"><button type="button" data-action="calendar-prev" aria-label="Previous week">‹</button><button type="button" data-action="calendar-today">Today</button><button type="button" data-action="calendar-next" aria-label="Next week">›</button></div>
         </div>
       </div>
       <div class="calendar-week-label">${weekLabel}</div>
-      ${activeUser.type === "teacher" && !calendarTeacherGrade ? '<p class="calendar-filter-prompt">Choose a grade to view events, or select All grades.</p>' : `<div class="calendar-week-grid">
+      <div class="calendar-week-grid">
         ${days.map((date) => {
           const dateEvents = events.filter((event) => event.date === date);
           const dateObject = new Date(`${date}T12:00:00`);
           const isToday = date === getTodayInputValue();
           return `<article class="calendar-day ${isToday ? "is-today" : ""}"><header><span>${new Intl.DateTimeFormat("en", { weekday: "short" }).format(dateObject)}</span><strong>${dateObject.getDate()}</strong></header><div class="calendar-day-events">${dateEvents.map(renderCalendarEvent).join("") || '<span class="calendar-empty">No scheduled event</span>'}</div></article>`;
         }).join("")}
-      </div>`}
+      </div>
     </section>
     ${renderCalendarEventCreateModal()}
   `;
@@ -1570,12 +1574,43 @@ function getRecordEditItem() {
 }
 
 function renderRecordEditButton(type, record) {
-  if (activeUser?.type !== "teacher" || !canEditStudentRecord(state, activeTeacher.id, record)) {
-    return "";
+  if (activeUser?.type !== "teacher") return "";
+  if (record.sourceType === "behavior-concern") {
+    type = "behavior";
+    record = state.behaviorConcerns.find(item => item.id === record.sourceConcernId);
+    if (!record) return "";
   }
-  const effectiveType = record.sourceType === "behavior-concern" ? "behavior" : type;
-  const effectiveId = record.sourceType === "behavior-concern" ? record.sourceConcernId : record.id;
-  return `<button class="record-edit-button" type="button" data-action="edit-student-record" data-record-type="${effectiveType}" data-record-id="${effectiveId}">Edit</button>`;
+  const editButton = canEditStudentRecord(state, activeTeacher.id, record)
+    ? `<button class="record-edit-button" type="button" data-action="edit-student-record" data-record-type="${type}" data-record-id="${escapeHtml(record.id)}">Edit</button>`
+    : "";
+  return editButton + renderRecordHistory(record);
+}
+
+function renderRecordHistory(record) {
+  const history = record.editHistory ?? [];
+  if (!history.length && !record.updatedAt) return "";
+  const fieldLabels = {
+    title: "Title", valueId: "7C", points: "Points", comment: "Comment", editorIds: "Additional editors",
+    description: "Description", incidentDate: "Record date", incidentTime: "Incident time", location: "Location",
+    customAction: "Immediate action", confidentialNote: "Confidential note",
+    furtherDetails: "Further steps", actionDetails: "Step taken", internalNote: "Internal note", followUp: "Follow-up"
+  };
+  function formatValue(field, value) {
+    if (field === "valueId") return getValue(value)?.name ?? value;
+    if (field === "editorIds") return value?.map(id => getTeacher(id)?.name ?? id).join(", ") || "—";
+    return value === "" || value == null ? "—" : String(value);
+  }
+  return `<details class="record-history">
+    <summary>Edit history${history.length ? ` (${history.length})` : ""}</summary>
+    ${history.length ? [...history].reverse().map(revision => `<article>
+      <strong>${escapeHtml(revision.teacherName ?? getTeacher(revision.teacherId)?.name ?? revision.teacherId)}</strong>
+      <time datetime="${escapeHtml(revision.editedAt)}">${formatDateTime(revision.editedAt, true)}</time>
+      <dl>${revision.changes.map(({ field, before, after }) => `
+        <dt>${escapeHtml(fieldLabels[field] ?? field)}</dt>
+        <dd><span>Before</span> ${escapeHtml(formatValue(field, before))}</dd>
+        <dd><span>After</span> ${escapeHtml(formatValue(field, after))}</dd>`).join("")}</dl>
+    </article>`).join("") : "<p>Field history is unavailable for this earlier edit.</p>"}
+  </details>`;
 }
 
 function renderRecordEditModal() {
@@ -1626,7 +1661,7 @@ function renderRecordEditModal() {
           <h2 id="record-edit-title">Edit ${typeLabel}</h2>
           <p>Published by ${escapeHtml(author?.name ?? "Unknown teacher")} on ${formatDateTime(record.publishedAt ?? record.createdAt)}.</p>
         </div>
-        <form id="record-edit-form" data-record-type="${type}" data-record-id="${record.id}">
+        <form id="record-edit-form" data-record-type="${type}" data-record-id="${record.id}" data-record-version="${record.editHistory?.length ?? 0}">
           <div class="record-edit-fields">${awardFields}${commonConcernFields}</div>
           ${type === "award" ? "" : renderEditorAccessPicker({ selectedIds: record.editorIds, authorId: record.teacherId })}
           <p class="field-help">The author, students involved, original publication date, and category-specific selections stay attached to this record.</p>
@@ -2921,7 +2956,11 @@ viewRoot.addEventListener("change", (event) => {
   if (event.target.matches("[data-activity-filter]")) { updateActivityFilter(event.target); return; }
   if (event.target.matches('[name="editorIds"]')) refreshEditorChips(event.target.closest(".editor-access-picker"));
   if (event.target.matches('#custom-calendar-event-form [name="scope"]')) { syncCalendarCreationScope(); return; }
-  if (event.target.matches("#calendar-grade-filter")) {
+  if (event.target.matches("#calendar-go-to-date") && event.target.value) {
+    calendarWeekStart = startOfCalendarWeek(event.target.value);
+    selectedCalendarEventId = null;
+    render();
+  } else if (event.target.matches("#calendar-grade-filter")) {
     calendarTeacherGrade = event.target.value;
     selectedCalendarEventId = null;
     render();
@@ -3025,16 +3064,19 @@ viewRoot.addEventListener("submit", async (event) => {
     const formData = new FormData(event.target);
     const type = event.target.dataset.recordType;
     const recordId = event.target.dataset.recordId;
+    const expectedVersion = Number(event.target.dataset.recordVersion);
     try {
       const editorIds = formData.getAll("editorIds");
       const nextState = type === "award"
         ? updateAward(state, recordId, activeTeacher.id, {
+            expectedVersion,
             valueId: formData.get("valueId"),
             points: formData.get("points"),
             comment: formData.get("comment"),
             editorIds
           })
         : updateConcern(state, type, recordId, activeTeacher.id, {
+            expectedVersion,
             incidentDate: formData.get("incidentDate"),
             incidentTime: formData.get("incidentTime"),
             location: formData.get("location"),

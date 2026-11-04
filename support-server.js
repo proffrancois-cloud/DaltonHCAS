@@ -26,7 +26,15 @@ export function synchronizeAlerts(state, today) {
 
 export function visibleState(state, actor) {
   const notifications = (state.notifications ?? []).filter(item => item.recipientIds.includes(actor.id))
-    .map(item => ({ ...item, recipientIds: actor.type === "teacher" ? item.recipientIds : [actor.id], readBy: { [actor.id]: item.readBy?.[actor.id] ?? null } }));
+    .flatMap(item => {
+      const award = item.kind === "coin-received" && state.awards.find(award => award.id === item.awardId);
+      if (item.kind === "coin-received" && !award) return [];
+      return [{
+        ...item, ...(award ? { points: award.points, valueIds: data.getAwardValueIds(award) } : {}),
+        recipientIds: actor.type === "teacher" ? item.recipientIds : [actor.id],
+        readBy: { [actor.id]: item.readBy?.[actor.id] ?? null }
+      }];
+    });
   if (actor.type === "teacher") return { ...state, notifications, schoolPublications: schoolPublications(state, actor), activityEvents: (state.activityEvents ?? []).filter(event => event.actorId === actor.id) };
   const student = state.students.find(item => item.id === actor.id);
   const calendar = data.getCalendarEvents(state, { user: actor });
@@ -34,7 +42,7 @@ export function visibleState(state, actor) {
   return {
     version: state.version, students: [student],
     teachers: state.teachers.map(({ id, name }) => ({ id, name })),
-    awards: state.awards.filter(item => item.studentId === actor.id),
+    awards: state.awards.filter(item => item.studentId === actor.id).map(({ editHistory, updatedBy, ...award }) => award),
     behaviorConcerns: state.behaviorConcerns.filter(item => item.studentIds.includes(actor.id)).map(item => ({
       id: item.id, studentIds: [actor.id], title: item.title, description: item.description,
       incidentDate: item.incidentDate, publishedAt: item.publishedAt,
