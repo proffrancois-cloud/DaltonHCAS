@@ -46,6 +46,10 @@ export function visibleState(state, actor) {
   const groupKeys = new Set(leadershipScopes(state, actor, { viewer: true }).map(s => s.key));
   return {
     version: state.version, students: [student], hubResources,
+    ecActivities: data.visibleEcActivities(state, actor).map(({ id, name, teacherIds, sessions }) => ({
+      id, name, teacherIds, memberIds: [actor.id],
+      sessions: (sessions ?? []).map(({ date, endTime, location }) => ({ date, endTime, location }))
+    })),
     teachers: state.teachers.map(({ id, name }) => ({ id, name })),
     awards: state.awards.filter(item => item.studentId === actor.id).map(({ editHistory, updatedBy, ...award }) => award),
     behaviorConcerns: state.behaviorConcerns.filter(item => item.studentIds.includes(actor.id)).map(item => ({

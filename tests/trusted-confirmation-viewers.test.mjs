@@ -71,3 +71,32 @@ test('members can browse their House and assigned LAB, view day-specific tasks, 
  const ranged=renderLeadershipWorkspace(memberState,member,'lab',String,{from:'2026-11-04',to:'2026-11-04'});
  assert.match(ranged,/Prepare materials/);assert.doesNotMatch(ranged,/Later task/);
 });
+
+test("the combined workspace and calendar show EC sessions only to the assigned students and staff", () => {
+  const state = createInitialState();
+  state.ecActivities = [{
+    id: "robotics", name: "Robotics EC", teacherIds: ["david"], memberIds: ["random1", "random2"],
+    sessions: [
+      { date: "2026-11-02", endTime: "16:30", location: "Room A" },
+      { date: "2026-11-04", endTime: "17:00", location: "Room B" }
+    ]
+  }];
+  const member = actorForAccount(state, "random1");
+  const nonmember = actorForAccount(state, "random3");
+  const memberState = visibleState(state, member);
+  assert.deepEqual(memberState.ecActivities[0].memberIds, ["random1"]);
+  assert.deepEqual(visibleState(state, nonmember).ecActivities, []);
+  const sessions = getCalendarEvents(memberState, { user: member }).filter(event => event.ecId);
+  assert.deepEqual(sessions.map(({ type, startTime, endTime, location }) => [type, startTime, endTime, location]), [
+    ["ec", "15:30", "16:30", "Room A"], ["ec", "15:30", "17:00", "Room B"]
+  ]);
+  const personalCalendar = id => getCalendarEvents(state, { user: actorForAccount(state, id), teacherGrade: "my" });
+  assert.equal(personalCalendar("david").filter(e => e.ecId).length, 2);
+  assert.equal(personalCalendar("francois").some(e => e.ecId), false);
+  assert.equal(getCalendarEvents(memberState, { user: member }).find(e => e.title === "EC Start").type, "ec");
+  const workspace = renderLeadershipWorkspace(memberState, member, null, String, { from: "2026-11-04", to: "2026-11-04" });
+  assert.match(workspace, /My lab, house, EC/);
+  assert.match(workspace, /leadership-lab-title.*leadership-house-title.*leadership-ec-title/s);
+  assert.match(workspace, /ec:robotics:2026-11-04/);
+  assert.doesNotMatch(workspace, /ec:robotics:2026-11-02/);
+});

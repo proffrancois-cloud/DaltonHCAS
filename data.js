@@ -1264,7 +1264,7 @@ export function addCustomCalendarEvent(
 }
 
 export function canEditCalendarEvent(state, user, event) {
-  if (!user || !event || event.schoolCalendar) return false;
+  if (!user || !event || event.schoolCalendar || event.type === "ec") return false;
   if (user.type === "teacher") {
     const teacher = resolveTeacher(state, user);
     if (!teacher) return false;
@@ -1356,11 +1356,19 @@ function schoolCalendarDays(entries, startDate, endDate, grade) {
     const lastDay = entry.endDate ?? entry.date;
     while (day.toISOString().slice(0, 10) <= lastDay && day.toISOString().slice(0, 10) <= endDate) {
       const date = day.toISOString().slice(0, 10);
-      events.push({ type: "school", ...entry, id: `${entry.id}::${date}`, date, rangeStart: entry.date, schoolCalendar: true });
+      const type = entry.type ?? (/^(EC (Start|Selection)|Last week of EC)$/i.test(entry.title) ? "ec" : "school");
+      events.push({ ...entry, type, id: `${entry.id}::${date}`, date, rangeStart: entry.date, schoolCalendar: true });
       day.setUTCDate(day.getUTCDate() + 1);
     }
   }
   return events;
+}
+
+export function visibleEcActivities(state, user, { allStaff = false } = {}) {
+  const teacher = resolveTeacher(state, user);
+  const student = user?.type === "student" && state.students.find(item => item.id === user.studentId);
+  return (state.ecActivities ?? []).filter(activity =>
+    teacher ? allStaff || activity.teacherIds?.includes(teacher.id) : student && activity.memberIds?.includes(student.id));
 }
 
 export function getCalendarEvents(
@@ -1466,8 +1474,19 @@ export function getCalendarEvents(
   }
 
   const existing = new Set(result.map(event => `${event.date}:${event.title.toLowerCase()}`));
-  return [...result, ...schoolEvents.filter(event => !existing.has(`${event.date}:${event.title.toLowerCase()}`))]
-    .sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
+  const ecEvents = visibleEcActivities(state, user, { allStaff: !personal })
+    .filter(activity => !teacher || !selectedGrade ||
+      state.students.some(member => member.grade === selectedGrade && activity.memberIds?.includes(member.id)))
+    .flatMap(activity => (activity.sessions ?? [])
+      .filter(session => session.date >= startDate && session.date <= endDate && ["16:30", "17:00"].includes(session.endTime))
+      .map(session => ({
+        id: `ec:${activity.id}:${session.date}`, ecId: activity.id, type: "ec", date: session.date,
+        title: activity.name, startTime: "15:30", endTime: session.endTime, location: session.location,
+        teacherIds: activity.teacherIds
+      })));
+  return [...result, ...ecEvents, ...schoolEvents.filter(event => !existing.has(`${event.date}:${event.title.toLowerCase()}`))]
+    .sort((a, b) => a.date.localeCompare(b.date) ||
+      (a.startTime ?? "").localeCompare(b.startTime ?? "") || a.title.localeCompare(b.title));
 }
 
 export function isValidStoredState(state) {

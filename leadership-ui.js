@@ -1,4 +1,8 @@
-import { leadershipScopes, leadershipEvents, eventScopeKey, canPublishEventActivity } from "./leadership.js";
+import { leadershipScopes, eventScopeKey, canPublishEventActivity } from "./leadership.js";
+import { getCalendarEvents, visibleEcActivities } from "./data.js";
+
+const ACTIVITY_MENU_TITLE = "My lab, house, EC";
+const sectionNames = { lab: "LAB", house: "House", ec: "EC" };
 
 const stamp = value => new Date(value).toLocaleString("en-GB", { timeZone: "Asia/Taipei" });
 const fileInput = '<label>Optional attachment<input type="file" name="attachment" accept=".pdf,.doc,.docx,.ppt,.pptx,.jpg,.jpeg,.png" /></label>';
@@ -15,13 +19,24 @@ export function renderEventActivities(state, actor, event, esc) {
     ${canPublishEventActivity(state, actor, event) ? `<form data-support-form="event-activity-add" data-event-id="${esc(event.id)}"><label>What are we doing today?<textarea name="text" rows="4" maxlength="12000" required></textarea></label>${fileInput}<button type="submit" class="secondary-button">Publish activity</button><p class="support-error" role="alert"></p></form>` : ""}${tasks.length ? `<section class="leadership-task-list"><h4>Tasks for this day</h4>${tasks.map(t => taskCard(state, actor, t, esc)).join("")}</section>` : ""}</section>`;
 }
 export function renderLeadershipWorkspace(state, actor, type, esc, { from = "", to = "" } = {}) {
-  const scopes = leadershipScopes(state, actor, { viewer: true }).filter(s => s.type === type);
-  const events = leadershipEvents(state, actor, type).filter(e => (!from || e.date >= from) && (!to || e.date <= to));
-  return `<div class="page leadership-workspace"><h1 class="sr-only">My ${type === "house" ? "house" : "lab"}</h1><div class="leadership-date-filters"><label>From<input type="date" data-leadership-date="from" value="${esc(from)}" /></label><label>To<input type="date" data-leadership-date="to" value="${esc(to)}" /></label></div>
-    ${scopes.map(scope => {
+  const sections = type ? [type] : ["lab", "house", "ec"];
+  const scopes = leadershipScopes(state, actor, { viewer: true });
+  const inRange = date => (!from || date >= from) && (!to || date <= to);
+  const events = getCalendarEvents(state, { user: actor }).filter(e => inRange(e.date));
+  const dateButtons = dates => dates.map(e => `<button type="button" data-action="open-calendar-event" data-event-id="${esc(e.id)}"><time>${esc(e.date)}</time><span>${esc(e.title)}</span>${(state.eventActivities ?? []).some(a => a.eventId === e.id) ? '<small>Activity shared</small>' : ""}</button>`).join("") || '<p class="muted-cell">No events in this range.</p>';
+  function groupContents(section) {
+    if (section === "ec") {
+      const activities = visibleEcActivities(state, actor, { allStaff: actor.role === "super-admin" });
+      return activities.map(activity => `<section class="panel leadership-scope"><div class="panel-heading"><h3>${esc(activity.name)}</h3></div><div class="leadership-columns ec-sessions"><div class="leadership-event-list">${dateButtons(events.filter(e => e.ecId === activity.id))}</div></div></section>`).join("") || '<p class="muted-cell">No EC assigned yet.</p>';
+    }
+    return scopes.filter(scope => scope.type === section).map(scope => {
       const dates = events.filter(e => eventScopeKey(e) === scope.key);
-      const tasks = (state.leadershipTasks ?? []).filter(t => t.scopeKey === scope.key && (!from || t.deadline >= from) && (!to || t.deadline <= to)).sort((a,b) => a.deadline.localeCompare(b.deadline));
-      return `<section class="panel leadership-scope"><div class="panel-heading"><h2>${esc(scope.name)}</h2></div><div class="leadership-columns"><section><h3>Events</h3><div class="leadership-event-list">${dates.map(e => `<button type="button" data-action="open-calendar-event" data-event-id="${esc(e.id)}"><time>${esc(e.date)}</time><span>${esc(e.title)}</span>${(state.eventActivities ?? []).some(a => a.eventId === e.id) ? '<small>Activity shared</small>' : ""}</button>`).join("") || '<p class="muted-cell">No events in this range.</p>'}</div></section><section><h3>Tasks</h3><div class="leadership-task-list">${tasks.map(t => taskCard(state, actor, t, esc)).join("") || '<p class="muted-cell">No tasks yet.</p>'}</div>
+      const tasks = (state.leadershipTasks ?? []).filter(t => t.scopeKey === scope.key && inRange(t.deadline)).sort((a,b) => a.deadline.localeCompare(b.deadline));
+      return `<section class="panel leadership-scope"><div class="panel-heading"><h3>${esc(scope.name)}</h3></div><div class="leadership-columns"><section><h4>Events</h4><div class="leadership-event-list">${dateButtons(dates)}</div></section><section><h4>Tasks</h4><div class="leadership-task-list">${tasks.map(t => taskCard(state, actor, t, esc)).join("") || '<p class="muted-cell">No tasks yet.</p>'}</div>
       ${actor.type === "teacher" ? `<details class="new-leader-task"><summary>Send a task</summary><form data-support-form="leader-task-add" data-scope-key="${esc(scope.key)}"><label>Title<input name="title" maxlength="200" required /></label><label>Description of the task<textarea name="description" rows="4" maxlength="12000" required></textarea></label><fieldset><legend>Captains / leaders</legend>${scope.leaderIds.map(id => `<label class="checkbox-label"><input type="checkbox" name="leaderIds" value="${esc(id)}" />${esc(state.students.find(s => s.id === id)?.name ?? "Student")}</label>`).join("") || '<p>No captain or leader assigned.</p>'}</fieldset><label>Deadline<input type="date" name="deadline" required /></label>${fileInput}<button type="submit" class="secondary-button" ${scope.leaderIds.length ? "" : "disabled"}>Send task</button><p class="support-error" role="alert"></p></form></details>` : ""}</section></div></section>`;
-    }).join("")}${!scopes.length ? `<p class="muted-cell">${type === "lab" ? "No lab assigned yet." : "No house assigned yet."}</p>` : ""}</div>`;
+    }).join("") || `<p class="muted-cell">No ${section} assigned yet.</p>`;
+  }
+  return `<div class="page leadership-workspace"><h1 class="sr-only">${ACTIVITY_MENU_TITLE}</h1><div class="leadership-date-filters"><label>From<input type="date" data-leadership-date="from" value="${esc(from)}" /></label><label>To<input type="date" data-leadership-date="to" value="${esc(to)}" /></label></div>
+    ${sections.map(section => `<section class="leadership-group" aria-labelledby="leadership-${section}-title"><h2 id="leadership-${section}-title">${sectionNames[section]}</h2>${groupContents(section)}</section>`).join("")}
+  </div>`;
 }

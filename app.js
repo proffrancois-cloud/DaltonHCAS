@@ -55,7 +55,8 @@ import {
   updateAward as localUpdateAward,
   updateCalendarEventDetails as localUpdateCalendarEventDetails,
   updateConcern as localUpdateConcern,
-  updateTeacherAccountStatus as localUpdateTeacherAccountStatus
+  updateTeacherAccountStatus as localUpdateTeacherAccountStatus,
+  visibleEcActivities
 } from "./data.js";
 import { cloudEnabled, cloudLogin, cloudCall, cloudChangePassword, cloudLogout, hasCloudSession } from "./cloud-client.js";
 import { leadershipScopes } from "./leadership.js";
@@ -391,7 +392,9 @@ function openLeadershipNotice(notice) {
     render();
     requestAnimationFrame(() => document.querySelector(".calendar-event-panel")?.focus());
   } else if (notice.taskId) {
-    setView(`my-${notice.scopeType}`);
+    leadershipDateFrom = "";
+    leadershipDateTo = "";
+    setView("my-activities");
     requestAnimationFrame(() => document.getElementById(`task-${notice.taskId}`)?.scrollIntoView({ block: "center" }));
   }
 }
@@ -432,6 +435,7 @@ function saveUserSession(user) {
 function getViewFromHash() {
   const hash = window.location.hash.replace("#", "");
   if (hash === "activity") return "dashboard";
+  if (hash === "my-house" || hash === "my-lab") return "my-activities";
   return [
     "dashboard",
     "send",
@@ -439,7 +443,7 @@ function getViewFromHash() {
     "academic-concern",
     "sel-concern",
     "students",
-    "administration", "my-house", "my-lab"
+    "administration", "my-activities"
   ].includes(hash)
     ? hash
     : "dashboard";
@@ -448,7 +452,7 @@ function getViewFromHash() {
 function setView(view, options = {}) {
   if (!activeUser) return;
   if (view === "activity") view = "dashboard";
-  if (activeUser.type === "student" && !["dashboard", "students", "my-house", "my-lab"].includes(view)) view = "dashboard";
+  if (activeUser.type === "student" && !["dashboard", "students", "my-activities"].includes(view)) view = "dashboard";
   if (view === "administration" && !canAccessAdministration()) view = "dashboard";
   if (view !== activeView && !options.studentId) resetRosterFilters(view);
   if (view !== activeView) for (const key of formStepState.keys()) if (key.startsWith(`${view}:`)) formStepState.delete(key);
@@ -814,6 +818,7 @@ function getCalendarTypeLabel(type) {
   return {
     house: "House",
     lab: "LAB",
+    ec: "EC",
     "level-up": "Level-Up",
     assembly: "Assembly",
     closure: "No school",
@@ -2533,7 +2538,7 @@ function render() {
     return;
   }
 
-  if (activeUser.type === "student" && !["dashboard", "students", "my-house", "my-lab"].includes(activeView)) {
+  if (activeUser.type === "student" && !["dashboard", "students", "my-activities"].includes(activeView)) {
     activeView = "dashboard";
     window.history.replaceState(null, "", "#dashboard");
   }
@@ -2541,11 +2546,13 @@ function render() {
     activeView = "dashboard";
     window.history.replaceState(null, "", "#dashboard");
   }
-  const scopes = leadershipScopes(state, activeUser, { viewer: true });
+  const canViewActivities = activeUser.type === "student" ||
+    leadershipScopes(state, activeUser, { viewer: true }).length > 0 ||
+    visibleEcActivities(state, activeUser).length > 0;
   document.querySelectorAll("[data-leadership-nav]").forEach(button => {
-    button.hidden = activeUser.type !== "student" && !scopes.some(scope => scope.type === button.dataset.leadershipNav);
+    button.hidden = !canViewActivities;
   });
-  if (activeUser.type !== "student" && ["my-house", "my-lab"].includes(activeView) && !scopes.some(scope => scope.type === activeView.slice(3))) activeView = "dashboard";
+  if (activeView === "my-activities" && !canViewActivities) activeView = "dashboard";
   teacherName.textContent = activeUser.name;
   document.querySelector("#mobile-staff-name").textContent = activeUser.name;
   teacherAvatar.alt = `${activeUser.name}'s Dalton Plan House Teams emblem`;
@@ -2582,7 +2589,7 @@ function render() {
   else if (activeView === "academic-concern") viewRoot.innerHTML = renderAcademicConcern();
   else if (activeView === "sel-concern") viewRoot.innerHTML = renderSelConcern();
   else if (activeView === "students") viewRoot.innerHTML = renderStudents();
-  else if (["my-house", "my-lab"].includes(activeView)) viewRoot.innerHTML = renderLeadershipWorkspace(state, activeUser, activeView.slice(3), escapeHtml, { from: leadershipDateFrom, to: leadershipDateTo });
+  else if (activeView === "my-activities") viewRoot.innerHTML = renderLeadershipWorkspace(state, activeUser, null, escapeHtml, { from: leadershipDateFrom, to: leadershipDateTo });
   else if (activeView === "administration") viewRoot.innerHTML = renderAdministration();
   else viewRoot.innerHTML = renderDashboard();
 
