@@ -715,3 +715,16 @@ legend > span, .concern-section > legend > span { width: 22px; height: 22px; bac
 .trusted-adult-chip { max-width: 100%; }
 .trusted-adult-chip-label { min-width: 0; overflow-wrap: anywhere; }
 .trusted-adult-chip-label small { display: block; font-size: 10px; color: var(--muted); }
+
+/* The same selectable cards in Behavior, Academic and SEL concerns. */
+.concern-form .issue-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.concern-form .issue-option { display: block; min-width: 0; position: relative; }
+.concern-form .issue-option > input { position: absolute; width: 1px; height: 1px; min-width: 0; min-height: 0; margin: 0; padding: 0; opacity: 0; overflow: hidden; clip-path: inset(50%); }
+.concern-form .issue-option > span { box-sizing: border-box; min-height: 52px; height: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 5px; background: white; }
+.concern-form .issue-option > input:checked + span { background: var(--school-gold-soft); border-color: var(--school-gold); }
+.concern-form .issue-option > input:focus-visible + span { outline: 2px solid var(--navy); outline-offset: 2px; }
+.concern-form .issue-option strong { font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.concern-form .issue-option small { font-size: 11px; }
+#sel-support-options { margin-bottom: 14px; }
+#sel-support-options:empty, #academic-strategy-heading:empty { display: none; }
+@media (max-width: 759px) { .concern-form .issue-options { grid-template-columns: minmax(0, 1fr); } }

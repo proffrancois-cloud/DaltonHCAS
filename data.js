@@ -1,4 +1,5 @@
 import {
+  concernTitle,
   ACADEMIC_CONCERN_EXAMPLES,
   ACADEMIC_PROFILES,
   BEHAVIOR_ISSUES,
@@ -805,6 +806,7 @@ export function addSelConcern(state, payload, now = Date.now()) {
     title,
     description,
     recommendedStrategies,
+    strategies: normalizeStringList(payload.strategies, 1000),
     followUp: normalizeText(payload.followUp, MAX_CONCERN_DESCRIPTION_LENGTH),
     confidentialNote: normalizeText(payload.confidentialNote, MAX_INTERNAL_NOTE_LENGTH),
     teacherId,
@@ -837,7 +839,7 @@ export function updateConcern(state, type, concernId, teacherId, changes, now = 
   const updated = {
     ...concern,
     title: normalizeRequiredText(
-      changes.title ?? concern.title,
+      concernTitle(type, concern) || concern.title,
       MAX_CONCERN_TITLE_LENGTH,
       "Concern title"
     ),
@@ -1623,11 +1625,7 @@ function normalizeStudentIds(state, studentIds) {
 function normalizeConcernBase(state, payload, concernType) {
   return {
     studentIds: normalizeStudentIds(state, payload.studentIds),
-    title: normalizeRequiredText(
-      payload.title,
-      MAX_CONCERN_TITLE_LENGTH,
-      `${concernType} concern title`
-    ),
+    title: normalizeText(concernTitle(concernType, payload), MAX_CONCERN_TITLE_LENGTH),
     description: normalizeRequiredText(
       payload.description,
       MAX_CONCERN_DESCRIPTION_LENGTH,

@@ -1,4 +1,4 @@
-export const MAX_CONCERN_TITLE_LENGTH = 120;
+export const MAX_CONCERN_TITLE_LENGTH = 6000;
 export const MAX_CONCERN_DESCRIPTION_LENGTH = 2000;
 export const MAX_INTERNAL_NOTE_LENGTH = 2000;
 
@@ -748,3 +748,19 @@ export const ACADEMIC_PROFILES = [
     ]
   }
 ];
+
+// Titles describe the selected issues; they are never supplied as free text.
+export function concernTitle(type, input) {
+  let labels;
+  if (type.toLowerCase() === "behavior") {
+    labels = (input.issueIds ?? []).map(id => BEHAVIOR_ISSUES.find(issue => issue.id === id)?.title).filter(Boolean);
+    if (input.otherIssueSelected === true || input.otherIssueSelected === "1" || (input.otherIssueSelected == null && input.otherIssue)) labels.push("Other issue not listed");
+  } else if (type.toLowerCase() === "sel") {
+    labels = (input.concernIds ?? []).map(id => SEL_CONCERN_OPTIONS.find(issue => issue.id === id)?.title).filter(Boolean);
+  } else {
+    labels = (input.issueIds ?? []).filter(id => id !== "other");
+    if ((input.issueIds ?? []).includes("other") || input.otherIssue) labels.push("Other");
+    if (!labels.length && input.profileId) labels.push(ACADEMIC_PROFILES.find(p => p.id === input.profileId)?.name);
+  }
+  return [...new Set(labels.filter(Boolean))].join(", ");
+}

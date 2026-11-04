@@ -7,7 +7,6 @@ import {
   BEHAVIOR_STRATEGY_GROUPS,
   HOUSES,
   MAX_CONCERN_DESCRIPTION_LENGTH,
-  MAX_CONCERN_TITLE_LENGTH,
   MAX_INTERNAL_NOTE_LENGTH,
   MAX_COMMENT_LENGTH,
   MAX_ATTACHMENT_DATA_LENGTH,
@@ -63,6 +62,7 @@ import { renderLeadershipWorkspace, renderEventActivities } from "./leadership-u
 import { SMART_FIELDS, isSupervisor } from "./support-rules.js";
 import { renderIepHeart, renderSupportProfile, renderSupportDocuments, renderTrustedAdults } from "./support-ui.js";
 import { renderFollowupNotifications as renderSupportNotifications, responseHistory, checkInRow, behaviorStudentResponse, notificationRecordTarget } from "./followup-ui.js";
+import { issueChoice, selSupportChoices } from "./concern-ui.js";
 import { academicStrategies, behavioralStrategies, selOptions } from "./tier-rules.js";
 import { enablePhonePush, disablePhonePush, initializePhonePush } from "./push-client.js";
 import { renderLevelUpAttachments, canReadLevelUpDocument } from "./levelup-resources.js";
@@ -533,12 +533,7 @@ function renderRecordAccessSummary(record) {
 }
 
 function canAccessAdministration() {
-  if (activeUser?.type !== "teacher") return false;
-  const teacher = getTeacher(activeUser.id);
-  const isLabLeader = (state.leadershipAssignments?.labs ?? []).some((lab) =>
-    lab.teacherIds?.includes(teacher?.id)
-  );
-  return isHouseLeaderTeacher(teacher) || teacher?.role === "super-admin" || isLabLeader || getTeacherLevelUpGrades(state, teacher?.id).length > 0;
+  return isSupervisor(activeUser?.type === "teacher" ? { ...getTeacher(activeUser.id), type: "teacher" } : activeUser);
 }
 
 function escapeHtml(value) {
@@ -1594,7 +1589,6 @@ function renderRecordEditModal() {
       ${type === "behavior" ? `<label>Incident time<input name="incidentTime" type="time" value="${escapeHtml(record.incidentTime ?? "13:15")}" required /></label>` : ""}
     </div>
     ${type === "behavior" ? `<label>Location<input name="location" maxlength="160" value="${escapeHtml(record.location ?? "")}" required /></label>` : ""}
-    <label>Title<input name="title" maxlength="${MAX_CONCERN_TITLE_LENGTH}" value="${escapeHtml(record.title)}" required /></label>
     <label>Description<textarea name="description" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" required>${escapeHtml(record.description)}</textarea></label>
     ${type === "behavior" ? `
       <label>Additional or different step taken<textarea name="customAction" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3">${escapeHtml(record.customAction ?? "")}</textarea></label>
@@ -1696,25 +1690,9 @@ function refreshConcernStudentSelector() {
 }
 
 function renderBehaviorIssueOptions(level) {
-  const issues = BEHAVIOR_ISSUES.filter((issue) => issue.level === Number(level))
-    .map(
-      (issue) => `
-        <label class="issue-option">
-          <input type="checkbox" name="issueIds" value="${issue.id}" />
-          <span>
-            <strong>${issue.title}</strong>
-            <small>${issue.description}</small>
-          </span>
-        </label>
-      `
-    )
-    .join("");
-  if (!issues) return '';
-  return `${issues}
-    <label class="issue-option">
-      <input id="behavior-other-issue-toggle" type="checkbox" name="otherIssueSelected" value="1" />
-      <span><strong>Other issue not listed</strong><small>Describe the issue in the incident description.</small></span>
-    </label>`;
+  if (![1, 2].includes(Number(level))) return "";
+  return BEHAVIOR_ISSUES.filter(issue => issue.level === Number(level)).map(issue => issueChoice({ name: "issueIds", value: issue.id, title: issue.title, description: issue.description }, escapeHtml)).join("")
+    + issueChoice({ name: "otherIssueSelected", value: "1", title: "Other issue not listed", id: "behavior-other-issue-toggle" }, escapeHtml);
 }
 
 function renderBehaviorStrategyPicker(tier = "") {
@@ -1780,12 +1758,11 @@ function renderBehaviorConcern() {
 
         <fieldset class="concern-section">
           <legend><span>2</span> Behavior code issue & incident details</legend>
-          <label class="full-field">Concern title<input name="title" maxlength="${MAX_CONCERN_TITLE_LENGTH}" required /></label>
           <div class="form-grid two-columns">
             <label>Behavior tier<select id="behavior-tier" name="tier" required><option value="">Select a tier first</option><option value="1">Tier 1 (Level I), teacher-managed</option><option value="2">Tier 2 (Level II), administration-managed</option></select></label>
             <label>Occurrence<select id="behavior-occurrence" name="occurrence" required><option value="">Select occurrence</option><option value="1">First occurrence</option><option value="2">Second occurrence</option><option value="3">Third occurrence or pattern</option></select></label>
           </div>
-          <div class="issue-level-group" id="behavior-tier-issues">
+          <div class="issue-level-group issue-options" id="behavior-tier-issues">
 
           </div>
                   <h3 class="subsection-title">Incident details</h3>
@@ -1850,18 +1827,10 @@ function renderBehaviorConcern() {
   `;
 }
 
-function renderAcademicIssueOptions(selectedTier = 1) {
-  return Object.entries(ACADEMIC_CONCERN_EXAMPLES)
-    .filter(([tier]) => Number(tier) === Number(selectedTier))
-    .map(
-      ([tier, issues]) => `
-        <optgroup label="Tier ${tier} academic concerns">
-          ${issues.map((issue) => `<option value="${escapeHtml(issue)}" data-tier="${tier}">${issue}</option>`).join("")}
-          <option value="other">Other</option>
-        </optgroup>
-      `
-    )
-    .join("");
+function renderAcademicIssueOptions(selectedTier = "", selected = []) {
+  const issues = ACADEMIC_CONCERN_EXAMPLES[Number(selectedTier)];
+  if (!issues) return "";
+  return [...issues, "other"].map(issue => issueChoice({ name: "issueIds", value: issue, title: issue === "other" ? "Other" : issue, checked: selected.includes(issue) }, escapeHtml)).join("");
 }
 
 function getAcademicStrategyOptions(tier, profileId) {
@@ -1869,6 +1838,7 @@ function getAcademicStrategyOptions(tier, profileId) {
 }
 
 function renderAcademicStrategyOptions(tier = 1, profileId = "") {
+  if (![1, 2, 3].includes(Number(tier))) return "";
   return getAcademicStrategyOptions(tier, profileId)
     .map((strategy) => `<option value="${escapeHtml(strategy)}">${strategy}</option>`)
     .join("") + '<option value="other">Other</option>';
@@ -1891,15 +1861,11 @@ function renderAcademicConcern() {
           <legend><span>2</span> Academic concern</legend>
           <div class="form-grid three-columns">
             <label>Date of concern<input name="incidentDate" type="date" value="${getTodayInputValue()}" required /></label>
-            <label>MTSS tier<select id="academic-tier" name="tier" required><option value="1">Tier 1</option><option value="2">Tier 2</option><option value="3">Tier 3</option></select></label>
+            <label>MTSS tier<select id="academic-tier" name="tier" required><option value="">Select a tier first</option><option value="1">Tier 1</option><option value="2">Tier 2</option><option value="3">Tier 3</option></select></label>
             <label>Special learning profile <small>Optional</small><select id="academic-profile" name="profileId"><option value="">No profile selected</option>${ACADEMIC_PROFILES.map((profile) => `<option value="${profile.id}">${profile.name}</option>`).join("")}</select></label>
           </div>
-          <label class="full-field">Concern title<input name="title" maxlength="${MAX_CONCERN_TITLE_LENGTH}" placeholder="Short internal title" required /></label>
-          <label class="full-field">What kind of academic issue?
-            <select id="academic-issue-select" name="issueIds" multiple size="8" >
-              ${renderAcademicIssueOptions()}
-            </select>
-          </label>
+          <h3 class="subsection-title">What kind of academic issue?</h3>
+          <div id="academic-issue-select" class="issue-options" role="group" aria-label="Academic issues">${renderAcademicIssueOptions()}</div>
 
           <label class="full-field conditional-field" id="academic-other-issue-field" hidden><span class="sr-only">Describe the other academic issue</span><textarea name="otherIssue" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="3" placeholder="Write the concern in your own words if it is not listed" disabled></textarea></label>
           <label class="full-field">Description<textarea name="description" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" placeholder="Include observations, evidence, or a pattern you have noticed" required></textarea></label>
@@ -1910,12 +1876,11 @@ function renderAcademicConcern() {
         <fieldset class="concern-section">
           <legend><span>3</span> Steps taken</legend>
           <div class="profile-strategy-heading" id="academic-strategy-heading">
-            <strong>Tier 1 instructional strategies</strong>
-            <span>Select all that were used.</span>
+
           </div>
           <label class="full-field"><span class="sr-only">Recommended intervention strategies</span>
             <select id="academic-strategy-select" name="strategies" multiple size="8">
-              ${renderAcademicStrategyOptions(1)}
+              ${renderAcademicStrategyOptions("")}
             </select>
           </label>
           <label class="full-field">Describe the step taken<textarea name="actionDetails" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" placeholder="Describe when, how, and for how long the support was provided" required></textarea></label>
@@ -1937,20 +1902,15 @@ function renderAcademicConcern() {
   `;
 }
 
-function renderSelConcernOptions(tier = 1) {
-  return selOptions(tier).map((option) => `
-    <article class="sel-concern-option ${option.urgent ? "is-urgent" : ""}">
-      <label>
-        <input type="checkbox" name="concernIds" value="${option.id}" />
-        <span><strong>${escapeHtml(option.title)}</strong><small>Tier ${option.tier}${option.urgent ? " · Immediate support review" : ""}</small></span>
-      </label>
-      <details>
-        <summary>PDF connection and suggested strategies</summary>
-        <p><strong>Closest PDF example:</strong> ${escapeHtml(option.pdfReference)}</p>
-        <ul>${option.strategies.map((strategy) => `<li>${escapeHtml(strategy)}</li>`).join("")}</ul>
-      </details>
-    </article>
-  `).join("");
+function renderSelConcernOptions(tier = "") {
+  if (![1, 2, 3].includes(Number(tier))) return "";
+  return selOptions(tier).map(option => issueChoice({ name: "concernIds", value: option.id, title: option.title, description: option.urgent ? "Immediate support review" : "" }, escapeHtml)).join("");
+}
+function updateSelSupportOptions() {
+  const form = document.querySelector("#sel-concern-form");
+  if (!form) return;
+  const values = new FormData(form);
+  form.querySelector("#sel-support-options").innerHTML = selSupportChoices(selOptions(values.get("tier")), values.getAll("concernIds"), values.getAll("strategies"), escapeHtml);
 }
 
 function renderSelConcern() {
@@ -1969,16 +1929,16 @@ function renderSelConcern() {
           <legend><span>2</span> Socio-emotional concern</legend>
           <div class="form-grid two-columns">
             <label>Date observed<input name="incidentDate" type="date" value="${getTodayInputValue()}" required /></label>
-            <label>Concern title<input name="title" maxlength="${MAX_CONCERN_TITLE_LENGTH}" required /></label>
+            <label>MTSS tier<select id="sel-tier" name="tier" required><option value="">Select a tier first</option><option value="1">Tier 1</option><option value="2">Tier 2</option><option value="3">Tier 3</option></select></label>
           </div>
-          <label>MTSS tier<select id="sel-tier" name="tier"><option value="1">Tier 1</option><option value="2">Tier 2</option><option value="3">Tier 3</option></select></label>
-          <div class="sel-concern-grid">${renderSelConcernOptions()}</div>
+          <div class="issue-options sel-concern-grid">${renderSelConcernOptions()}</div>
           <label class="full-field">Description<textarea name="description" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="5" required></textarea></label>
           ${renderConcernAttachmentFields()}
         </fieldset>
 
         <fieldset class="concern-section">
-          <legend><span>4</span> Support or follow-up <small>Optional</small></legend>
+          <legend><span>3</span> Support or follow-up <small>Optional</small></legend>
+          <div id="sel-support-options" class="issue-options"></div>
           <label class="full-field"><span class="sr-only">Support or follow-up</span><textarea name="followUp" maxlength="${MAX_CONCERN_DESCRIPTION_LENGTH}" rows="4" placeholder="Support offered, people contacted, or next review step"></textarea></label>
 
         </fieldset>
@@ -2279,6 +2239,7 @@ function renderSelConcernsTable(student) {
                         <h4>Observed concerns</h4>
                         <ul>${options.map((option) => `<li><span class="level-badge academic-tier">Tier ${option.tier}</span> ${escapeHtml(option.title)}${option.urgent ? " · immediate support review" : ""}</li>`).join("")}${concern.otherConcern && concern.otherConcern !== concern.description ? `<li>${escapeHtml(concern.otherConcern)}</li>` : ""}</ul>
                         ${(concern.recommendedStrategies ?? []).length ? `<h4>Linked MTSS strategies</h4><ul>${concern.recommendedStrategies.map((strategy) => `<li>${escapeHtml(strategy)}</li>`).join("")}</ul>` : ""}
+                        ${(concern.strategies ?? []).length ? `<h4>Support selected</h4><ul>${concern.strategies.map(strategy => `<li>${escapeHtml(strategy)}</li>`).join("")}</ul>` : ""}
                         ${concern.followUp ? `<h4>Support or follow-up</h4><p>${escapeHtml(concern.followUp)}</p>` : ""}
                         ${renderConcernAttachment(concern, "record")}
                         ${linkedStudents.length ? `<h4>Other students involved, teacher-only</h4><div class="linked-students">${linkedStudents.map((linkedStudent) => renderStudentIdentity(linkedStudent, { secondary: `Grade ${linkedStudent.grade}`, points: getStudentTotal(state, linkedStudent.id), action: true, className: "is-compact" })).join("")}</div>` : ""}
@@ -2466,7 +2427,7 @@ function updateBehaviorCodePreview() {
 function syncAcademicOtherIssue() {
   const select = document.querySelector("#academic-issue-select"), field = document.querySelector("#academic-other-issue-field");
   if (!select || !field) return;
-  const other = [...select.selectedOptions].some(option => option.value === "other");
+  const other = Boolean(select.querySelector('[name="issueIds"][value="other"]:checked'));
   field.hidden = !other;
   const input = field.querySelector("textarea");
   input.disabled = !other; input.required = other;
@@ -2475,16 +2436,15 @@ function syncAcademicOtherIssue() {
 function updateAcademicFormOptions({ resetIssues = false } = {}) {
   const tierSelect = document.querySelector("#academic-tier"), profileSelect = document.querySelector("#academic-profile"), issueSelect = document.querySelector("#academic-issue-select"), strategySelect = document.querySelector("#academic-strategy-select"), heading = document.querySelector("#academic-strategy-heading");
   if (!tierSelect || !profileSelect || !issueSelect || !strategySelect || !heading) return;
-  const selectedIssues = [...issueSelect.selectedOptions].map(option => option.value).filter(id => !resetIssues || id === "other");
+  const selectedIssues = [...issueSelect.querySelectorAll('[name="issueIds"]:checked')].map(option => option.value).filter(id => !resetIssues || id === "other");
   const selectedStrategies = [...strategySelect.selectedOptions].map(option => option.value);
   const tier = Number(tierSelect.value), profileId = profileSelect.value;
   profileSelect.closest("label").hidden = false;
-  issueSelect.innerHTML = renderAcademicIssueOptions(tier);
-  [...issueSelect.options].forEach(option => option.selected = selectedIssues.includes(option.value));
+  issueSelect.innerHTML = renderAcademicIssueOptions(tier, selectedIssues);
   strategySelect.innerHTML = renderAcademicStrategyOptions(tier, profileId);
   [...strategySelect.options].forEach(option => option.selected = selectedStrategies.includes(option.value));
   const profile = ACADEMIC_PROFILES.find(item => item.id === profileId);
-  heading.innerHTML = profile ? `<strong>Five recommended intervention strategies</strong><span>${profile.name}</span>` : `<strong>Tier ${tier} ${tier === 1 ? "instructional strategies" : "academic interventions"}</strong>`;
+  heading.innerHTML = !tier ? "" : profile ? `<strong>Five recommended intervention strategies</strong><span>${profile.name}</span>` : `<strong>Tier ${tier} ${tier === 1 ? "instructional strategies" : "academic interventions"}</strong>`;
   syncAcademicOtherIssue();
 }
 
@@ -3020,9 +2980,12 @@ viewRoot.addEventListener("change", (event) => {
     select.innerHTML = '<option value="">Select a concern</option>' + (state[`${type}Concerns`] ?? []).filter(c => c.studentIds.includes(form.dataset.studentId)).map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.title)} · ${escapeHtml(c.incidentDate)}</option>`).join("");
   } else if (event.target.matches("#sel-tier")) {
     document.querySelector(".sel-concern-grid").innerHTML = renderSelConcernOptions(event.target.value);
+    updateSelSupportOptions();
   } else if (event.target.matches('#behavior-concern-form [name="deductionValueIds"]')) {
     updateDeductionSentence();
-  } else if (event.target.matches("#academic-issue-select")) {
+  } else if (event.target.matches('#sel-concern-form [name="concernIds"]')) {
+    updateSelSupportOptions();
+  } else if (event.target.matches('#academic-issue-select [name="issueIds"]')) {
     syncAcademicOtherIssue();
   } else if (event.target.matches("#academic-profile")) {
     updateAcademicFormOptions();
@@ -3077,7 +3040,6 @@ viewRoot.addEventListener("submit", async (event) => {
             incidentDate: formData.get("incidentDate"),
             incidentTime: formData.get("incidentTime"),
             location: formData.get("location"),
-            title: formData.get("title"),
             description: formData.get("description"),
             customAction: formData.get("customAction"),
             confidentialNote: formData.get("confidentialNote"),
@@ -3284,7 +3246,6 @@ viewRoot.addEventListener("submit", async (event) => {
         issueIds: formData.getAll("issueIds"),
         otherIssueSelected: formData.get("otherIssueSelected"),
         additionalIssueDetails: formData.get("otherIssueSelected") ? formData.get("description") : "",
-        title: formData.get("title"),
         description: formData.get("description"),
         incidentTime: String(formData.get("incidentAt")).split("T")[1],
         location: formData.get("location"),
@@ -3328,7 +3289,6 @@ viewRoot.addEventListener("submit", async (event) => {
         issueIds: formData.getAll("issueIds"),
         otherIssue: formData.get("otherIssue"),
         profileId: formData.get("profileId"),
-        title: formData.get("title"),
         description: formData.get("description"),
         strategies: formData.getAll("strategies"),
         otherStrategy: "",
@@ -3365,8 +3325,8 @@ viewRoot.addEventListener("submit", async (event) => {
         studentIds: formData.getAll("studentIds"),
         concernIds: formData.getAll("concernIds"),
         otherConcern: formData.getAll("concernIds").includes("other") ? formData.get("description") : "",
-        title: formData.get("title"),
         description: formData.get("description"),
+        strategies: formData.getAll("strategies"),
         followUp: formData.get("followUp"),
         confidentialNote: formData.get("confidentialNote"),
         editorIds: formData.getAll("editorIds"),

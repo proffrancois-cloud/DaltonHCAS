@@ -452,7 +452,7 @@ test("staff statuses enforce permanent and delegated record editing access", () 
     actionDetails: "Second conference held.",
     editorIds: [leader.id]
   });
-  assert.equal(state.academicConcerns.at(-1).title, "Updated follow-up");
+  assert.equal(state.academicConcerns.at(-1).title, "Missing or incomplete work");
 });
 
 test("House leader teachers publish only their own House events", () => {

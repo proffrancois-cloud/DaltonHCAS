@@ -17,5 +17,7 @@ export function validateConcernTier(type, input) {
     if ((input.strategies ?? []).some(s => !behavioralStrategies(tier).some(g => g.options.includes(s)))) throw new Error("Select behavioral strategies from the selected tier");
   } else if (type === "sel" && input.tier != null) {
     if (![1, 2, 3].includes(tier) || (input.concernIds ?? []).some(id => !SEL_CONCERN_OPTIONS.some(o => o.id === id && (id === "other" || o.tier === tier)))) throw new Error("Select SEL concerns from the selected tier");
+    const linked = SEL_CONCERN_OPTIONS.filter(o => (input.concernIds ?? []).includes(o.id)).flatMap(o => o.strategies);
+    if ((input.strategies ?? []).some(strategy => !linked.includes(strategy))) throw new Error("Select support linked to the chosen SEL concerns");
   }
 }

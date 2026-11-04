@@ -11,6 +11,7 @@ const publicEntries = [
   "student-ui.js",
   "activity.js",
   "form-steps.js",
+  "concern-ui.js",
   "calendar-data.js",
   "concerns-data.js",
   "data.js",
