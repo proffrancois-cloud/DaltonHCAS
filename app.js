@@ -1217,8 +1217,23 @@ function renderHouseLeaders(house, leaders) {
 }
 
 
+function renderDashboardHub() {
+  const resources = state.hubResources ?? [];
+  const meetingNotes = resources.filter(resource => resource.group === "grade-meetings");
+  const resourceItem = ({ title, url }) => /^https:\/\//i.test(url ?? "")
+    ? `<li><a class="hub-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" aria-label="${escapeHtml(title)} (opens in a new tab)">${escapeHtml(title)} <span aria-hidden="true">↗</span></a></li>`
+    : `<li><span class="hub-link hub-link-pending">${escapeHtml(title)} <small>Link pending</small></span></li>`;
+  return `<section class="panel dashboard-hub" aria-labelledby="dashboard-hub-title">
+    <div class="panel-heading"><h2 id="dashboard-hub-title">Hub</h2></div>
+    <ul class="hub-links">${resources.filter(resource => !resource.group).map(resourceItem).join("")}</ul>
+    ${meetingNotes.length ? `<div class="hub-meeting-notes">
+      <h3>Grade-level meeting notes</h3>
+      <ul class="hub-links hub-grade-links">${meetingNotes.map(resourceItem).join("")}</ul>
+    </div>` : ""}
+  </section>`;
+}
+
 function renderDashboard() {
-  const totals = getHouseTotals(state);
   const activeStudent = getActiveStudent();
   if (activeStudent) {
     return `
@@ -1227,18 +1242,22 @@ function renderDashboard() {
         ${renderSchoolCalendar()}
         ${cloudEnabled ? renderSupportNotifications(state, activeUser, escapeHtml) : ""}
         ${cloudEnabled ? renderSupportProfile(state, activeUser, activeStudent, escapeHtml, { dashboard: true }) : ""}
+        ${renderDashboardHub()}
       </div>
     `;
   }
   return `
     <div class="page">
       ${renderPageHeader("Dashboard", "")}
-      ${renderSchoolCalendar()}
       <div class="dashboard-overview">
         ${renderSupportNotifications(state, activeUser, escapeHtml)}
-        ${renderTeacherActivity()}
+        ${renderSchoolCalendar()}
       </div>
-      ${renderSchoolActivity(state, activeUser, schoolActivityFilters, schoolActivityPage, HOUSES, escapeHtml, renderSchoolActivityStudent, formatDateTime)}
+      <div class="dashboard-overview dashboard-activities">
+        ${renderTeacherActivity()}
+        ${renderSchoolActivity(state, activeUser, schoolActivityFilters, schoolActivityPage, HOUSES, escapeHtml, renderSchoolActivityStudent, formatDateTime)}
+      </div>
+      ${renderDashboardHub()}
     </div>
   `;
 }

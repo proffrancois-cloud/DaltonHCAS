@@ -87,3 +87,22 @@ test("staff edit history preserves exact changes and rejects stale edits; studen
   assert.equal(student.academicConcerns.length + student.selConcerns.length, 0);
   assert.doesNotMatch(JSON.stringify(student), /editHistory|Earlier comment|Original observation|private note/);
 });
+
+test("dashboard Hub returns only the resources authorized for the signed-in account", () => {
+  const state = createInitialState();
+  state.hubResources = [
+    { title: "School calendar", url: "https://example.com/internal", audience: "teacher" },
+    { title: "School calendar", url: "https://example.com/external", audience: "student" },
+    { title: "Student handbook", audience: "all" },
+    { title: "Grade 6", group: "grade-meetings", audience: "teacher" },
+    { title: "HoD meeting notes", url: "https://example.com/hod", audience: "hod", accountIds: ["david"] }
+  ];
+  const resourcesFor = id => visibleState(state, actorForAccount(state, id)).hubResources;
+  assert.deepEqual(resourcesFor("random1").map(r => r.title), ["School calendar", "Student handbook"]);
+  assert.equal(resourcesFor("random1")[0].url, "https://example.com/external");
+  assert.equal(resourcesFor("david")[0].url, "https://example.com/internal");
+  assert.equal(resourcesFor("david").find(r => r.title === "Grade 6").group, "grade-meetings");
+  assert.equal(resourcesFor("david").find(r => r.title === "HoD meeting notes").url, "https://example.com/hod");
+  assert.equal(resourcesFor("francois").some(r => r.title === "HoD meeting notes"), false);
+  assert.doesNotMatch(JSON.stringify(resourcesFor("david")), /audience|accountIds/);
+});

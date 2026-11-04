@@ -25,6 +25,11 @@ export function synchronizeAlerts(state, today) {
 }
 
 export function visibleState(state, actor) {
+  const { hubResources: resourceCatalog = [], ...staffState } = state;
+  const hubResources = resourceCatalog
+    .filter(({ audience, accountIds }) => audience === "all" || audience === actor.type ||
+      (audience === "hod" && actor.type === "teacher" && accountIds?.includes(actor.id)))
+    .map(({ title, url, group }) => ({ title, url, group }));
   const notifications = (state.notifications ?? []).filter(item => item.recipientIds.includes(actor.id))
     .flatMap(item => {
       const award = item.kind === "coin-received" && state.awards.find(award => award.id === item.awardId);
@@ -35,12 +40,12 @@ export function visibleState(state, actor) {
         readBy: { [actor.id]: item.readBy?.[actor.id] ?? null }
       }];
     });
-  if (actor.type === "teacher") return { ...state, notifications, schoolPublications: schoolPublications(state, actor), activityEvents: (state.activityEvents ?? []).filter(event => event.actorId === actor.id) };
+  if (actor.type === "teacher") return { ...staffState, notifications, hubResources, schoolPublications: schoolPublications(state, actor), activityEvents: (state.activityEvents ?? []).filter(event => event.actorId === actor.id) };
   const student = state.students.find(item => item.id === actor.id);
   const calendar = data.getCalendarEvents(state, { user: actor });
   const groupKeys = new Set(leadershipScopes(state, actor, { viewer: true }).map(s => s.key));
   return {
-    version: state.version, students: [student],
+    version: state.version, students: [student], hubResources,
     teachers: state.teachers.map(({ id, name }) => ({ id, name })),
     awards: state.awards.filter(item => item.studentId === actor.id).map(({ editHistory, updatedBy, ...award }) => award),
     behaviorConcerns: state.behaviorConcerns.filter(item => item.studentIds.includes(actor.id)).map(item => ({

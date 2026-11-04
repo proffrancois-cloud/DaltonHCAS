@@ -467,9 +467,28 @@ legend > span, .concern-section > legend > span { width: 22px; height: 22px; bac
 .sidebar-account strong { font-size: 11px; }
 .sidebar-account button { font-size: 10px; }
 .page-context { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
-.dashboard-overview { display: grid; grid-template-columns: minmax(270px, .85fr) minmax(0, 1.65fr); gap: 18px; margin-bottom: 20px; align-items: stretch; }
-.dashboard-overview > .notification-panel { min-width: 0; max-height: 390px; overflow: auto; margin: 0; border-bottom: 0; padding-bottom: 0; }
+.dashboard-overview { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-bottom: 20px; }
+.dashboard-overview > .notification-panel,
+.dashboard-overview > .calendar-section { min-width: 0; height: 380px; margin: 0; overflow: auto; }
+.dashboard-overview > .notification-panel { border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; }
 .dashboard-overview .notification-panel li { grid-template-columns: 1fr; }
+.dashboard-overview .calendar-heading { flex-wrap: wrap; gap: 8px; }
+.dashboard-overview .calendar-toolbar { flex-basis: 100%; margin: 0; }
+.dashboard-overview .calendar-week-grid { min-width: 0; grid-template-columns: repeat(7, minmax(64px, 1fr)); overflow: auto; }
+.dashboard-overview .calendar-day { min-width: 0; }
+.dashboard-overview .calendar-event-title { overflow-wrap: anywhere; }
+.dashboard-activities > .activity-timeline { height: 390px; max-height: 390px; margin: 0; }
+.dashboard-activities #school-activity-content { flex: 1; }
+.dashboard-activities .school-activity-pages { flex: none; }
+.dashboard-hub { min-width: 0; margin-top: 20px; }
+.dashboard-hub .panel-heading { min-height: 44px; padding: 10px 14px; }
+.hub-links { display: grid; grid-template-columns: repeat(auto-fit, minmax(136px, 1fr)); gap: 8px; margin: 0; padding: 12px 14px; list-style: none; }
+.hub-link { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 100%; min-height: 38px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--navy-dark); font-size: 12px; text-decoration: none; }
+a.hub-link:hover { background: var(--school-gold-soft); border-color: var(--school-gold); }
+.hub-link-pending, .hub-link small { color: var(--muted); }
+.hub-link small { font-size: 10px; }
+.hub-meeting-notes h3 { margin: 0; padding: 4px 14px 0; color: var(--muted); font-size: 12px; font-weight: 600; }
+.hub-grade-links { grid-template-columns: repeat(6, minmax(88px, 1fr)); overflow-x: auto; }
 .activity-timeline { display: flex; flex-direction: column; min-width: 0; min-height: 140px; max-height: 390px; }
 .activity-timeline .panel-heading { min-height: 44px; height: 44px; padding: 10px 12px; }
 .activity-timeline .panel-heading > span { color: var(--muted); font-size: 11px; }
@@ -575,7 +594,10 @@ legend > span, .concern-section > legend > span { width: 22px; height: 22px; bac
 .app-install-dialog .field-help { font-size: 12px; color: var(--muted); }
 .app-update-bar[hidden] { display: none; }
 .app-update-bar { position: fixed; z-index: 80; right: 16px; bottom: 16px; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; max-width: calc(100vw - 32px); padding: 12px 14px; border: 1px solid var(--school-gold); border-radius: 8px; background: white; color: var(--ink); box-shadow: 0 3px 16px #1426381a; font-size: 13px; }
-@media (max-width: 1050px) { .dashboard-overview { grid-template-columns: 1fr; } }
+@media (max-width: 1050px) {
+  .dashboard-overview { grid-template-columns: minmax(0, 1fr); }
+  .dashboard-overview > .notification-panel { height: auto; max-height: 380px; }
+}
 @media (max-width: 759px) {
   .topbar { display: grid; grid-template-columns: minmax(0, 1fr); height: auto; min-height: 58px; padding-block: 7px; }
   .app-update-bar { bottom: calc(80px + env(safe-area-inset-bottom)); left: 12px; right: 12px; max-width: none; }
