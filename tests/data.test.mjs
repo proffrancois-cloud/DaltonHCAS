@@ -532,7 +532,7 @@ test("behavior issues exactly cover the 10 Level I and 14 Level II code categori
   assert.equal(BEHAVIOR_ISSUES.filter((issue) => issue.level === 2).length, 14);
 });
 
-test("behavior concerns support multiple students and use the selected occurrence", () => {
+test("behavior concerns support multiple students and derive occurrences from their records", () => {
   const now = new Date("2026-11-02T04:00:00Z").getTime();
   const state = createInitialState(now);
   const first = addBehaviorConcern(

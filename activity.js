@@ -97,6 +97,7 @@ export function filterActivity(events, filters = {}) {
     const date = day(event.at);
     if (filters.from && date < filters.from || filters.to && date > filters.to) return false;
     return event.participants.some(person =>
+      (!filters.studentId || person.id === filters.studentId) &&
       (!query || person.name.toLowerCase().includes(query)) &&
       (!filters.house || person.houseId === filters.house) &&
       (!filters.grade || String(person.grade) === String(filters.grade))
@@ -111,4 +112,18 @@ export function staffLastName(person) {
 }
 export function alphabeticStaff(people) {
   return [...people].sort((a, b) => staffLastName(a).localeCompare(staffLastName(b), "en", { sensitivity: "base" }) || a.name.localeCompare(b.name));
+}
+
+export function schoolPublications(state, actor) {
+  if (actor?.type !== "teacher") return [];
+  const history = new Map([...existingActivity(state), ...(state.activityEvents ?? [])].filter(e => ["award-add", "concern-add"].includes(e.action)).map(e => [e.id, e]));
+  return [...history.values()].map(e => {
+    const record = e.recordKind === "award" ? state.awards.find(a => a.id === e.recordId) : state[`${e.recordKind}Concerns`]?.find(c => c.id === e.recordId);
+    return { ...e, title: record?.title ?? e.description, authorName: state.teachers.find(t => t.id === e.actorId)?.name ?? "Staff" };
+  }).sort((a,b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id));
+}
+export function schoolPublicationPage(events, filters = {}, page = 0) {
+  const filtered = filterActivity(events, filters), pages = Math.max(1, Math.ceil(filtered.length / 10));
+  const index = Math.min(Math.max(0, page), pages - 1);
+  return { entries: filtered.slice(index * 10, index * 10 + 10), total: filtered.length, page: index, pages };
 }

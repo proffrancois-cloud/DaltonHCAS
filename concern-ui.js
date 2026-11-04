@@ -1,6 +1,6 @@
 // One keyboard-accessible, highlighted choice style for all concern categories.
-export function issueChoice({ name, value, title, description = "", id = "", checked = false }, esc) {
-  return `<label class="issue-option"><input type="checkbox" name="${esc(name)}" value="${esc(value)}" ${id ? `id="${esc(id)}"` : ""} ${checked ? "checked" : ""} /><span><strong>${esc(title)}</strong>${description ? `<small>${esc(description)}</small>` : ""}</span></label>`;
+export function issueChoice({ name, value, title, description = "", id = "", checked = false, detailHtml = "" }, esc) {
+  return `<label class="issue-option"><input type="checkbox" name="${esc(name)}" value="${esc(value)}" ${id ? `id="${esc(id)}"` : ""} ${checked ? "checked" : ""} /><span><strong>${esc(title)}</strong>${description ? `<small>${esc(description)}</small>` : ""}${detailHtml}</span></label>`;
 }
 export function selSupportChoices(options, selectedIds, selectedStrategies, esc) {
   const linked = new Map();

@@ -588,20 +588,17 @@ export function updateAward(state, awardId, teacherId, changes, now = Date.now()
   };
 }
 
-export function getBehaviorCodeActions(state, studentIds, issueIds, occurrenceOverride = null) {
-  const selectedOccurrence = [1, 2, 3].includes(Number(occurrenceOverride))
-    ? Number(occurrenceOverride)
-    : null;
+export function getBehaviorIssueCount(state, studentId, issueId) {
+  return (state.behaviorConcerns ?? []).filter(c => c.publishedAt && c.studentIds.includes(studentId) && c.issueIds.includes(issueId)).length;
+}
+export function getBehaviorCodeActions(state, studentIds, issueIds) {
   return studentIds.flatMap((studentId) =>
     issueIds.map((issueId) => {
       const issue = BEHAVIOR_ISSUES.find((item) => item.id === issueId);
       if (!issue) throw new Error("Unknown behavior issue");
 
-      const previousCount = (state.behaviorConcerns ?? []).filter(
-        (concern) =>
-          concern.studentIds.includes(studentId) && concern.issueIds.includes(issueId)
-      ).length;
-      const occurrence = selectedOccurrence ?? previousCount + 1;
+      const previousCount = getBehaviorIssueCount(state, studentId, issueId);
+      const occurrence = previousCount + 1;
       const action =
         issue.level === 2
           ? LEVEL_TWO_ACTION
@@ -625,28 +622,28 @@ export function addBehaviorConcern(state, payload, now = Date.now()) {
     payload,
     "Behavior"
   );
-  const tier = Number(payload.tier);
   const issueIds = [...new Set(payload.issueIds ?? [])];
-  const otherIssueSelected = payload.otherIssueSelected === true || payload.otherIssueSelected === "1";
+  const otherIssueSelected = Boolean(payload.otherIssueTiers?.length) || payload.otherIssueSelected === true || payload.otherIssueSelected === "1";
+  const otherIssueTiers = payload.otherIssueTiers?.map(Number) ?? (otherIssueSelected ? [Number(payload.tier) || 1] : []);
+  if (otherIssueTiers.some(t => ![1, 2].includes(t))) throw new Error("Unknown behavior tier");
+  const tiers = [...new Set([...issueIds.map(id => BEHAVIOR_ISSUES.find(i => i.id === id)?.level).filter(Boolean), ...otherIssueTiers])];
+  const tier = Math.max(...tiers);
   const additionalIssueDetails = normalizeText(
     payload.additionalIssueDetails ?? payload.otherIssue,
     MAX_CONCERN_DESCRIPTION_LENGTH
   );
-  const occurrence = Number(payload.occurrence);
+  const codeActions = getBehaviorCodeActions(state, studentIds, issueIds);
+  const occurrence = Math.min(Math.max(1, ...codeActions.map(a => a.occurrence)), 3);
   const incidentTime = validateTimeInput(payload.incidentTime);
   const location = normalizeRequiredText(payload.location, 160, "Incident location");
   const otherLocation = normalizeText(payload.otherLocation, 160);
 
-  if (![1, 2].includes(tier)) throw new Error("Choose behavior Tier 1 or Tier 2");
-  if (![1, 2, 3].includes(occurrence)) throw new Error("Choose the occurrence");
+  if (![1, 2].includes(tier)) throw new Error("Choose at least one behavior issue");
   if (!issueIds.length && !otherIssueSelected) {
     throw new Error("Choose at least one behavior issue");
   }
   if (issueIds.some((issueId) => !BEHAVIOR_ISSUES.some((issue) => issue.id === issueId))) {
     throw new Error("Unknown behavior issue");
-  }
-  if (issueIds.some((issueId) => BEHAVIOR_ISSUES.find((issue) => issue.id === issueId).level !== tier)) {
-    throw new Error("Choose issues from the selected behavior tier");
   }
   if (otherIssueSelected && !additionalIssueDetails) {
     throw new Error("Describe the issue not listed");
@@ -680,6 +677,9 @@ export function addBehaviorConcern(state, payload, now = Date.now()) {
     tier,
     issueIds,
     otherIssueSelected,
+    otherIssueTiers,
+    tiers,
+    automaticOccurrence: true,
     otherIssue: otherIssueSelected ? additionalIssueDetails : "",
     additionalIssueDetails,
     occurrence,
@@ -696,7 +696,7 @@ export function addBehaviorConcern(state, payload, now = Date.now()) {
     incidentTime,
     location: location === "Other location" ? otherLocation : location,
     publishedAt,
-    codeActions: getBehaviorCodeActions(state, studentIds, issueIds, occurrence),
+    codeActions,
     deduction: deductionPoints ? { valueId: deductionValueId, valueIds: deductionValueIds, points: deductionPoints } : null,
     ...attachment
   };
@@ -757,6 +757,8 @@ export function addAcademicConcern(state, payload, now = Date.now()) {
     description,
     strategies: normalizeStringList(payload.strategies, 260).map(strategy => strategy === "other" ? "Other" : strategy),
     otherStrategy: normalizeText(payload.otherStrategy, MAX_CONCERN_DESCRIPTION_LENGTH),
+    furtherStrategies: normalizeStringList(payload.furtherStrategies, 260).map(s => s === "other" ? "Other" : s),
+    furtherDetails: normalizeText(payload.furtherDetails, MAX_CONCERN_DESCRIPTION_LENGTH),
     actionDetails: normalizeRequiredText(
       payload.actionDetails,
       MAX_CONCERN_DESCRIPTION_LENGTH,
@@ -874,6 +876,7 @@ export function updateConcern(state, type, concernId, teacherId, changes, now = 
       MAX_INTERNAL_NOTE_LENGTH
     );
   } else if (type === "academic") {
+    updated.furtherDetails = normalizeText(changes.furtherDetails ?? concern.furtherDetails, MAX_CONCERN_DESCRIPTION_LENGTH);
     updated.actionDetails = normalizeRequiredText(
       changes.actionDetails ?? concern.actionDetails,
       MAX_CONCERN_DESCRIPTION_LENGTH,

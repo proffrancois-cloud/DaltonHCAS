@@ -3,7 +3,7 @@ import * as support from "./support-rules.js";
 import * as followup from "./followup-rules.js";
 import { validateConcernTier } from "./tier-rules.js";
 import { visibleLevelUpDocuments } from "./levelup-resources.js";
-import { recordActivity } from "./activity.js";
+import { recordActivity, schoolPublications } from "./activity.js";
 import { applyLeadershipCommand, leadershipScopes } from "./leadership.js";
 
 export function actorForAccount(state, accountId) {
@@ -27,7 +27,7 @@ export function synchronizeAlerts(state, today) {
 export function visibleState(state, actor) {
   const notifications = (state.notifications ?? []).filter(item => item.recipientIds.includes(actor.id))
     .map(item => ({ ...item, recipientIds: actor.type === "teacher" ? item.recipientIds : [actor.id], readBy: { [actor.id]: item.readBy?.[actor.id] ?? null } }));
-  if (actor.type === "teacher") return { ...state, notifications, activityEvents: (state.activityEvents ?? []).filter(event => event.actorId === actor.id) };
+  if (actor.type === "teacher") return { ...state, notifications, schoolPublications: schoolPublications(state, actor), activityEvents: (state.activityEvents ?? []).filter(event => event.actorId === actor.id) };
   const student = state.students.find(item => item.id === actor.id);
   const calendar = data.getCalendarEvents(state, { user: actor });
   const groupKeys = new Set(leadershipScopes(state, actor, { viewer: true }).map(s => s.key));

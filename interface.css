@@ -728,3 +728,20 @@ legend > span, .concern-section > legend > span { width: 22px; height: 22px; bac
 #sel-support-options { margin-bottom: 14px; }
 #sel-support-options:empty, #academic-strategy-heading:empty { display: none; }
 @media (max-width: 759px) { .concern-form .issue-options { grid-template-columns: minmax(0, 1fr); } }
+.behavior-tier-columns { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 14px; margin-bottom: 20px; }
+.behavior-tier-panel { min-width: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.behavior-tier-panel h3 { font-size: 14px; margin: 0; padding: 12px; border-bottom: 1px solid var(--line); }
+.concern-form .behavior-tier-scroll { height: 360px; overflow-y: auto; align-content: start; padding: 10px; }
+.offense-counts { display: flex !important; gap: 5px; flex-wrap: wrap; margin-top: 7px; }
+.offense-counts:empty { display: none !important; }
+.offense-count { display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 4px; border-radius: 999px; background: var(--school-red); color: white; font-size: 11px; font-weight: 700; }
+#behavior-strategy-options, #academic-strategy-select, #academic-further-options { max-height: 350px; overflow-y: auto; margin-bottom: 14px; }
+.school-activity { margin-top: 20px; }
+#school-activity-content { display: flex; flex-direction: column; min-height: 0; }
+#school-activity-content .activity-table-scroll { max-height: 440px; }
+.school-activity-pages { display: flex; align-items: center; justify-content: center; gap: 18px; padding: 10px; border-top: 1px solid var(--line); font-size: 12px; }
+.school-activity-pages button { min-width: 40px; font-size: 22px; }
+.school-publication-title { text-align: left; white-space: normal; }
+@media (max-width: 759px) { .behavior-tier-columns { grid-template-columns: minmax(0,1fr); } }
+
+.school-activity { max-height: none; }

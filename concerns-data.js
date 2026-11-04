@@ -754,7 +754,7 @@ export function concernTitle(type, input) {
   let labels;
   if (type.toLowerCase() === "behavior") {
     labels = (input.issueIds ?? []).map(id => BEHAVIOR_ISSUES.find(issue => issue.id === id)?.title).filter(Boolean);
-    if (input.otherIssueSelected === true || input.otherIssueSelected === "1" || (input.otherIssueSelected == null && input.otherIssue)) labels.push("Other issue not listed");
+    if (input.otherIssueTiers?.length || input.otherIssueSelected === true || input.otherIssueSelected === "1" || (input.otherIssueSelected == null && input.otherIssue)) labels.push("Other issue not listed");
   } else if (type.toLowerCase() === "sel") {
     labels = (input.concernIds ?? []).map(id => SEL_CONCERN_OPTIONS.find(issue => issue.id === id)?.title).filter(Boolean);
   } else {
