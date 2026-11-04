@@ -507,13 +507,13 @@ a.hub-link:hover { background: var(--school-gold-soft); border-color: var(--scho
 .hub-meeting-notes h3 { margin: 0; padding: 4px 14px 0; color: var(--muted); font-size: 12px; font-weight: 600; }
 .hub-grade-links { grid-template-columns: repeat(6, minmax(88px, 1fr)); overflow-x: auto; }
 .dashboard-page :is(.panel, .calendar-section, #student-smart-goals) {
-  border: 1px solid var(--school-red);
+  border: 1px solid var(--navy);
   border-radius: 8px;
 }
 .dashboard-page :is(.panel-heading, .calendar-heading, .record-section-heading, .activity-timeline-table th) {
-  background: var(--school-gold);
+  background: white;
   color: var(--school-red-dark);
-  border-bottom: 1px solid var(--school-red);
+  border-bottom: 1px solid var(--navy);
 }
 .dashboard-page :is(.panel-heading, .calendar-heading, .record-section-heading) :is(h2, h3, span, button, select, input) {
   color: var(--school-red-dark);
@@ -529,7 +529,7 @@ a.hub-link:hover { background: var(--school-gold-soft); border-color: var(--scho
 }
 .dashboard-page :is(.notification-panel, #student-smart-goals) > :not(.record-section-heading) { margin-inline: 12px; }
 .dashboard-page :is(.calendar-day, .calendar-day > header, .activity-timeline-table td, .activity-filter-panel, .school-activity-pages) {
-  border-color: color-mix(in srgb, var(--school-red) 40%, white);
+  border-color: color-mix(in srgb, var(--navy) 40%, white);
 }
 .activity-timeline { display: flex; flex-direction: column; min-width: 0; min-height: 140px; max-height: 390px; }
 .activity-timeline .panel-heading { min-height: 44px; height: 44px; padding: 10px 12px; }
