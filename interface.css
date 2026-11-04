@@ -472,8 +472,22 @@ legend > span, .concern-section > legend > span { width: 22px; height: 22px; bac
 .dashboard-overview > .calendar-section { min-width: 0; height: 380px; margin: 0; overflow: auto; }
 .dashboard-overview > .notification-panel { border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; }
 .dashboard-overview .notification-panel li { grid-template-columns: 1fr; }
-.dashboard-overview .calendar-heading { flex-wrap: wrap; gap: 8px; }
-.dashboard-overview .calendar-toolbar { flex-basis: 100%; margin: 0; }
+.dashboard-page .calendar-heading { width: auto; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; }
+.dashboard-page .calendar-heading h2 { white-space: nowrap; }
+.dashboard-page .calendar-toolbar { flex-basis: auto; justify-content: flex-start; margin: 0; gap: 6px; }
+.dashboard-page .calendar-toolbar select { padding-inline: 6px 18px; }
+.dashboard-page .calendar-toolbar input { min-height: 36px; padding-inline: 6px; }
+.dashboard-page .calendar-create-trigger { padding-inline: 8px; white-space: nowrap; }
+.dashboard-page .calendar-week-label { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
+@media (1050px < width <= 1300px) {
+  .dashboard-overview .calendar-heading { gap: 5px; padding-inline: 8px; }
+  .dashboard-overview .calendar-heading h2 { font-size: 13px; }
+  .dashboard-overview .calendar-create-trigger { padding-inline: 5px; font-size: 11px; }
+  .dashboard-overview .calendar-create-trigger > span { display: none; }
+  .dashboard-overview .calendar-toolbar { gap: 4px; }
+  .dashboard-overview .calendar-toolbar select { width: 104px; padding-inline: 4px; font-size: 11px; }
+  .dashboard-overview .calendar-toolbar input { width: 104px; min-width: 0; font-size: 11px; }
+}
 .dashboard-overview .calendar-week-grid { min-width: 0; grid-template-columns: repeat(7, minmax(64px, 1fr)); overflow: auto; }
 .dashboard-overview .calendar-day { min-width: 0; }
 .dashboard-overview .calendar-event-title { overflow-wrap: anywhere; }
@@ -489,6 +503,31 @@ a.hub-link:hover { background: var(--school-gold-soft); border-color: var(--scho
 .hub-link small { font-size: 10px; }
 .hub-meeting-notes h3 { margin: 0; padding: 4px 14px 0; color: var(--muted); font-size: 12px; font-weight: 600; }
 .hub-grade-links { grid-template-columns: repeat(6, minmax(88px, 1fr)); overflow-x: auto; }
+.dashboard-page :is(.panel, .calendar-section, #student-smart-goals) {
+  border: 1px solid var(--school-red);
+  border-radius: 8px;
+}
+.dashboard-page :is(.panel-heading, .calendar-heading, .record-section-heading, .activity-timeline-table th) {
+  background: var(--school-gold);
+  color: var(--school-red-dark);
+  border-bottom: 1px solid var(--school-red);
+}
+.dashboard-page :is(.panel-heading, .calendar-heading, .record-section-heading) :is(h2, h3, span, button, select, input) {
+  color: var(--school-red-dark);
+}
+.dashboard-page :is(.panel, .calendar-section, #student-smart-goals) > :is(.panel-heading, .calendar-heading, .record-section-heading) {
+  border-radius: 7px 7px 0 0;
+}
+.dashboard-page :is(.notification-panel, #student-smart-goals) { padding: 0 0 12px; }
+.dashboard-page :is(.notification-panel, #student-smart-goals) > .record-section-heading {
+  min-height: 44px;
+  margin: 0 0 8px;
+  padding: 8px 12px;
+}
+.dashboard-page :is(.notification-panel, #student-smart-goals) > :not(.record-section-heading) { margin-inline: 12px; }
+.dashboard-page :is(.calendar-day, .calendar-day > header, .activity-timeline-table td, .activity-filter-panel, .school-activity-pages) {
+  border-color: color-mix(in srgb, var(--school-red) 40%, white);
+}
 .activity-timeline { display: flex; flex-direction: column; min-width: 0; min-height: 140px; max-height: 390px; }
 .activity-timeline .panel-heading { min-height: 44px; height: 44px; padding: 10px 12px; }
 .activity-timeline .panel-heading > span { color: var(--muted); font-size: 11px; }

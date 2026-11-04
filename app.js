@@ -1094,10 +1094,12 @@ function renderSchoolCalendar() {
         <div class="calendar-toolbar">
           ${activeUser.type === "teacher" ? `<label><span class="sr-only">Calendar view</span><select id="calendar-grade-filter"><option value="my">My assignments</option><option value="all" ${calendarTeacherGrade === "all" ? "selected" : ""}>All grades</option>${[6, 7, 8, 9, 10, 11, 12].map((grade) => `<option value="${grade}" ${calendarTeacherGrade === String(grade) ? "selected" : ""}>Grade ${grade}</option>`).join("")}</select></label>` : ""}
           <label><span class="sr-only">Go to date</span><input id="calendar-go-to-date" type="date" value="${calendarWeekStart}" /></label>
-          <div class="calendar-week-controls"><button type="button" data-action="calendar-prev" aria-label="Previous week">‹</button><button type="button" data-action="calendar-today">Today</button><button type="button" data-action="calendar-next" aria-label="Next week">›</button></div>
         </div>
       </div>
-      <div class="calendar-week-label">${weekLabel}</div>
+      <div class="calendar-week-label">
+        <span>${weekLabel}</span>
+        <div class="calendar-week-controls"><button type="button" data-action="calendar-prev" aria-label="Previous week">‹</button><button type="button" data-action="calendar-today">Today</button><button type="button" data-action="calendar-next" aria-label="Next week">›</button></div>
+      </div>
       <div class="calendar-week-grid">
         ${days.map((date) => {
           const dateEvents = events.filter((event) => event.date === date);
@@ -1237,7 +1239,7 @@ function renderDashboard() {
   const activeStudent = getActiveStudent();
   if (activeStudent) {
     return `
-      <div class="page student-dashboard">
+      <div class="page dashboard-page student-dashboard">
         ${renderPageHeader("Dashboard", "")}
         ${renderSchoolCalendar()}
         ${cloudEnabled ? renderSupportNotifications(state, activeUser, escapeHtml) : ""}
@@ -1247,7 +1249,7 @@ function renderDashboard() {
     `;
   }
   return `
-    <div class="page">
+    <div class="page dashboard-page">
       ${renderPageHeader("Dashboard", "")}
       <div class="dashboard-overview">
         ${renderSupportNotifications(state, activeUser, escapeHtml)}
